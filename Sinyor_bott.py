@@ -320,26 +320,28 @@ async def betco_get_last_login_ip(client_id: int):
     return None
 
 # --- IP çakışması kontrol fonksiyonu ---
-async def betco_get_all_login_ips(client_id: int):
-    url = "https://backofficewebadmin.betcostatic.com/api/tr/Client/GetLogins"
+# --- IP çakışması kontrol fonksiyonu ---
+async def check_ip_conflict(ip: str, exclude_client_id: int = None):
+    """
+    Aynı IP'den giriş yapan başka kullanıcı var mı kontrol et.
+    exclude_client_id → kendi ID'sini hariç tutar.
+    """
     payload = {
-        "ClientId": client_id,
-        "StartDate": None,
-        "EndDate": None,
-        "MaxRows": 50,   # son 50 giriş IP’sini al
-        "SkipRows": 0
+        "LoginIP": ip,
+        "IsOrderedDesc": True,
+        "MaxRows": 50,
+        "SkeepRows": 0,
+        "IsStartWithSearch": False
     }
-    result = await betco_post(url, payload)
+    result = await betco_post(BETCO_GET_CLIENTS_URL, payload)
     try:
-        objects = result.get("Data", {}).get("Objects", [])
-        ips = set()  # duplicate engellemek için set
-        for obj in objects:
-            ip = obj.get("LoginIP")
-            if ip:
-                ips.add(ip)
-        return list(ips)
+        objects = result.get("Data", {}).get("Objects", []) or []
+        # Eğer kendi ID'si varsa onu hariç tut
+        if exclude_client_id:
+            objects = [u for u in objects if str(u.get("Id")) != str(exclude_client_id)]
+        return len(objects), objects
     except Exception:
-        return []
+        return 0, []
 
 async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_user_id = update.effective_user.id
