@@ -1,0 +1,300 @@
+import React, { useState } from "react";
+import { ethers } from "ethers";
+
+// Kontrat ABI ve adresi
+const ABI = [  {"inputs":[{"internalType":"string","name":"n","type":"string"},{"internalType":"string","name":"s","type":"string"},{"internalType":"string","name":"p","type":"string"},{"internalType":"uint256","name":"m","type":"uint256"}],"stateMutability":"nonpayable","type":"constructor"},
+  {"inputs":[],"name":"AccessControlBadConfirmation","type":"error"},
+  {"inputs":[{"internalType":"address","name":"account","type":"address"},{"internalType":"bytes32","name":"neededRole","type":"bytes32"}],"name":"AccessControlUnauthorizedAccount","type":"error"},
+  {"inputs":[{"internalType":"address","name":"spender","type":"address"},{"internalType":"uint256","name":"allowance","type":"uint256"},{"internalType":"uint256","name":"needed","type":"uint256"}],"name":"ERC20InsufficientAllowance","type":"error"},
+  {"inputs":[{"internalType":"address","name":"sender","type":"address"},{"internalType":"uint256","name":"balance","type":"uint256"},{"internalType":"uint256","name":"needed","type":"uint256"}],"name":"ERC20InsufficientBalance","type":"error"},
+  {"inputs":[{"internalType":"address","name":"approver","type":"address"}],"name":"ERC20InvalidApprover","type":"error"},
+  {"inputs":[{"internalType":"address","name":"receiver","type":"address"}],"name":"ERC20InvalidReceiver","type":"error"},
+  {"inputs":[{"internalType":"address","name":"sender","type":"address"}],"name":"ERC20InvalidSender","type":"error"},
+  {"inputs":[{"internalType":"address","name":"spender","type":"address"}],"name":"ERC20InvalidSpender","type":"error"},
+  {"inputs":[],"name":"EnforcedPause","type":"error"},
+  {"inputs":[],"name":"ExpectedPause","type":"error"},
+  {"inputs":[{"internalType":"address","name":"owner","type":"address"}],"name":"OwnableInvalidOwner","type":"error"},
+  {"inputs":[{"internalType":"address","name":"account","type":"address"}],"name":"OwnableUnauthorizedAccount","type":"error"},
+  {"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"owner","type":"address"},{"indexed":true,"internalType":"address","name":"spender","type":"address"},{"indexed":false,"internalType":"uint256","name":"value","type":"uint256"}],"name":"Approval","type":"event"},
+  {"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"previousOwner","type":"address"},{"indexed":true,"internalType":"address","name":"newOwner","type":"address"}],"name":"OwnershipTransferred","type":"event"},
+  {"anonymous":false,"inputs":[{"indexed":false,"internalType":"address","name":"account","type":"address"}],"name":"Paused","type":"event"},
+  {"anonymous":false,"inputs":[{"indexed":true,"internalType":"bytes32","name":"role","type":"bytes32"},{"indexed":true,"internalType":"bytes32","name":"previousAdminRole","type":"bytes32"},{"indexed":true,"internalType":"bytes32","name":"newAdminRole","type":"bytes32"}],"name":"RoleAdminChanged","type":"event"},
+  {"anonymous":false,"inputs":[{"indexed":true,"internalType":"bytes32","name":"role","type":"bytes32"},{"indexed":true,"internalType":"address","name":"account","type":"address"},{"indexed":true,"internalType":"address","name":"sender","type":"address"}],"name":"RoleGranted","type":"event"},
+  {"anonymous":false,"inputs":[{"indexed":true,"internalType":"bytes32","name":"role","type":"bytes32"},{"indexed":true,"internalType":"address","name":"account","type":"address"},{"indexed":true,"internalType":"address","name":"sender","type":"address"}],"name":"RoleRevoked","type":"event"},
+  {"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"from","type":"address"},{"indexed":true,"internalType":"address","name":"to","type":"address"},{"indexed":false,"internalType":"uint256","name":"value","type":"uint256"}],"name":"Transfer","type":"event"},
+  {"anonymous":false,"inputs":[{"indexed":false,"internalType":"address","name":"account","type":"address"}],"name":"Unpaused","type":"event"},
+  {"inputs":[{"internalType":"uint256","name":"x","type":"uint256"}],"name":"B","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[],"name":"DEFAULT_ADMIN_ROLE","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"internalType":"address","name":"a","type":"address"}],"name":"GM","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[{"internalType":"address","name":"a","type":"address"}],"name":"GP","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[{"internalType":"address","name":"a","type":"address"},{"internalType":"uint256","name":"x","type":"uint256"}],"name":"M","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[],"name":"P","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"PZ","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[],"name":"R1","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"R2","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"internalType":"address","name":"a","type":"address"}],"name":"RM","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[{"internalType":"address","name":"a","type":"address"}],"name":"RP","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[],"name":"UP","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[{"internalType":"address","name":"owner","type":"address"},{"internalType":"address","name":"spender","type":"address"}],"name":"allowance","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"internalType":"address","name":"spender","type":"address"},{"internalType":"uint256","name":"value","type":"uint256"}],"name":"approve","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[{"internalType":"address","name":"account","type":"address"}],"name":"balanceOf","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"internalType":"address[]","name":"recipients","type":"address[]"},{"internalType":"uint256[]","name":"amounts","type":"uint256[]"}],"name":"batchTransfer","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[],"name":"decimals","outputs":[{"internalType":"uint8","name":"","type":"uint8"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"internalType":"bytes32","name":"role","type":"bytes32"}],"name":"getRoleAdmin","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"internalType":"bytes32","name":"role","type":"bytes32"},{"internalType":"address","name":"account","type":"address"}],"name":"grantRole","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[{"internalType":"bytes32","name":"role","type":"bytes32"},{"internalType":"address","name":"account","type":"address"}],"name":"hasRole","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"name","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"owner","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"paused","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"renounceOwnership","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[{"internalType":"bytes32","name":"role","type":"bytes32"},{"internalType":"address","name":"callerConfirmation","type":"address"}],"name":"renounceRole","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[{"internalType":"bytes32","name":"role","type":"bytes32"},{"internalType":"address","name":"account","type":"address"}],"name":"revokeRole","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[{"internalType":"bytes4","name":"interfaceId","type":"bytes4"}],"name":"supportsInterface","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"symbol","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"totalSupply","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"value","type":"uint256"}],"name":"transfer","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[{"internalType":"address","name":"from","type":"address"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"value","type":"uint256"}],"name":"transferFrom","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[{"internalType":"address","name":"newOwner","type":"address"}],"name":"transferOwnership","outputs":[],"stateMutability":"nonpayable","type":"function"} ];
+const CONTRACT_ADDRESS = "0x7D75627e6Ae866b2053b384c87Af9bB1b078cCE4";
+
+function App() {
+  const [provider, setProvider] = useState();
+  const [signer, setSigner] = useState();
+  const [contract, setContract] = useState();
+  const [mintAddress, setMintAddress] = useState("");
+  const [mintAmount, setMintAmount] = useState("");
+  const [burnAmount, setBurnAmount] = useState("");
+  const [recipients, setRecipients] = useState("");
+  const [amounts, setAmounts] = useState("");
+  const [roleAddress, setRoleAddress] = useState("");
+  const [roleType, setRoleType] = useState("R1");
+  const [status, setStatus] = useState("");
+  const [error, setError] = useState("");
+  const [paused, setPaused] = useState(false);
+
+  // Hata mesajını düzgün formatla
+  const formatError = (e) => {
+    console.error("Error detail:", e);
+    return e?.reason || e?.data?.message || e?.message || JSON.stringify(e);
+  };
+
+  // MetaMask bağlantısı
+  const connectWallet = async () => {
+    try {
+      if (!window.ethereum) {
+        setError("MetaMask bulunamadı.");
+        return;
+      }
+      const p = new ethers.BrowserProvider(window.ethereum);
+      await window.ethereum.request({ method: "eth_requestAccounts" });
+      const s = await p.getSigner();
+      const c = new ethers.Contract(CONTRACT_ADDRESS, ABI, s);
+
+      setProvider(p);
+      setSigner(s);
+      setContract(c);
+      setError("");
+      setStatus("Cüzdan başarıyla bağlandı!");
+
+      try {
+        const isPaused = await c.paused();
+        setPaused(isPaused);
+      } catch {}
+    } catch (e) {
+      setError("Bağlantı hatası: " + formatError(e));
+    }
+  };
+
+  // Token basma
+  const mint = async () => {
+    try {
+      const tx = await contract.M(mintAddress, ethers.parseUnits(mintAmount, 18));
+      await tx.wait();
+      setError("");
+      setStatus("Mint başarılı!");
+    } catch (e) {
+      setError("Mint hatası: " + formatError(e));
+    }
+  };
+
+  // Token yakma
+  const burn = async () => {
+    try {
+      const tx = await contract.B(ethers.parseUnits(burnAmount, 18));
+      await tx.wait();
+      setError("");
+      setStatus("Burn başarılı!");
+    } catch (e) {
+      setError("Burn hatası: " + formatError(e));
+    }
+  };
+
+  // Toplu transfer
+  const batchTransfer = async () => {
+    try {
+      // Örnek: 500 adres ve her birine aynı miktar göndermek
+      const recArr = Array.from({ length: 500 }, (_, i) => `0xADRES_${i}`); // 500 adres buraya koy
+      const amtArr = recArr.map(() => ethers.parseUnits("1", 18)); // Her adrese 1 token
+
+      const tx = await contract.batchTransfer(recArr, amtArr);
+      await tx.wait();
+
+      setError("");
+      setStatus(`Batch transfer başarılı! ${recArr.length} adrese gönderim yapıldı.`);
+    } catch (e) {
+      setError("Batch transfer hatası: " + formatError(e));
+    }
+  };
+
+  // Çoklu transfer (her biri ayrı tx)
+  const multiTransfer = async () => {
+    try {
+      const recArr = recipients
+        .split(/[\s,]+/) 
+        .map(a => a.trim())
+        .filter(a => a);
+
+      const amtRaw = amounts
+        .split(/[\s,]+/)
+        .map(a => a.trim())
+        .filter(a => a);
+
+      let amtArr;
+
+      if (amtRaw.length === 1) {
+        amtArr = recArr.map(() => ethers.parseUnits(amtRaw[0], 18));
+      } else if (amtRaw.length === recArr.length) {
+        amtArr = amtRaw.map(a => ethers.parseUnits(a, 18));
+      } else {
+        throw new Error(
+          `Adres sayısı (${recArr.length}) ile miktar sayısı (${amtRaw.length}) eşleşmiyor.`
+        );
+      }
+
+      // Burada her transfer ayrı tx olacak
+      const txs = [];
+      for (let i = 0; i < recArr.length; i++) {
+        const tx = await contract.transfer(recArr[i], amtArr[i]);
+        txs.push(tx.wait());
+        console.log(`Transfer başlatıldı -> ${recArr[i]} : ${amtRaw[i]}`);
+      }
+
+      await Promise.all(txs);
+      setError("");
+      setStatus(`${recArr.length} adrese ayrı ayrı transfer tamamlandı!`);
+
+    } catch (e) {
+      setError("Multi transfer hatası: " + formatError(e));
+    }
+  };
+  // Pause
+  const pause = async () => {
+    try {
+      const tx = await contract.PZ();
+      await tx.wait();
+      setPaused(true);
+      setError("");
+      setStatus("Token durduruldu (pause)!");
+    } catch (e) {
+      setError("Pause hatası: " + formatError(e));
+    }
+  };
+
+  // Unpause
+  const unpause = async () => {
+    try {
+      const tx = await contract.UP();
+      await tx.wait();
+      setPaused(false);
+      setError("");
+      setStatus("Token tekrar aktif (unpause)!");
+    } catch (e) {
+      setError("Unpause hatası: " + formatError(e));
+    }
+  };
+
+  // Rol ekle
+  const addRole = async () => {
+    try {
+      const role = await contract[roleType]();
+      const tx = await contract.grantRole(role, roleAddress);
+      await tx.wait();
+      setError("");
+      setStatus("Rol başarıyla eklendi!");
+    } catch (e) {
+      setError("Rol ekleme hatası: " + formatError(e));
+    }
+  };
+
+  // Rol kaldır
+  const removeRole = async () => {
+    try {
+      const role = await contract[roleType]();
+      const tx = await contract.revokeRole(role, roleAddress);
+      await tx.wait();
+      setError("");
+      setStatus("Rol başarıyla kaldırıldı!");
+    } catch (e) {
+      setError("Rol kaldırma hatası: " + formatError(e));
+    }
+  };
+
+  return (
+    <div style={{
+      maxWidth: 600,
+      margin: "40px auto",
+      padding: 30,
+      background: "#f8f9fa",
+      borderRadius: 16,
+      boxShadow: "0 2px 12px #0002"
+    }}>
+      <h2 style={{textAlign:"center"}}>Token Paneli</h2>
+      <button style={{marginBottom:10}} onClick={connectWallet}>Cüzdanı Bağla</button>
+
+      {error && <div style={{color:"red", marginBottom:10}}>{error}</div>}
+      {!error && status && <div style={{color:"green", marginBottom:10}}>{status}</div>}
+
+      <hr />
+      <h3>Token Bas (Mint)</h3>
+      <input placeholder="Adres" value={mintAddress} onChange={e => setMintAddress(e.target.value)} style={{width:"60%"}} />
+      <input placeholder="Miktar" value={mintAmount} onChange={e => setMintAmount(e.target.value)} style={{width:"30%", marginLeft:10}} />
+      <button onClick={mint} style={{marginLeft:10}}>Mint</button>
+      <hr />
+      <h3>Token Yak (Burn)</h3>
+      <input placeholder="Miktar" value={burnAmount} onChange={e => setBurnAmount(e.target.value)} style={{width:"60%"}} />
+      <button onClick={burn} style={{marginLeft:10}}>Burn</button>
+      <hr />
+      <h3>Toplu Transfer (Batch)</h3>
+      <textarea placeholder="Adresler (virgül ile)" value={recipients} onChange={e => setRecipients(e.target.value)} style={{width:"100%",height:60}} />
+      <textarea placeholder="Miktarlar (virgül ile)" value={amounts} onChange={e => setAmounts(e.target.value)} style={{width:"100%",height:60,marginTop:5}} />
+      <div>
+        <button onClick={batchTransfer} style={{marginTop:10, background:"#28a745", color:"#fff"}}>
+          Batch Transfer (Tek Tx)
+        </button>
+
+        <button onClick={multiTransfer} style={{marginTop:10, marginLeft:10, background:"#007bff", color:"#fff"}}>
+          Multi Transfer (Ayrı Tx)
+        </button>
+      </div>
+      <hr />
+      <h3>Token Durumu</h3>
+      <div>
+        <b>Durum:</b> {paused ? "Durduruldu (Paused)" : "Aktif (Unpaused)"}
+        <button onClick={pause} style={{marginLeft:10, background:"#ffc107"}} disabled={paused}>Pause</button>
+        <button onClick={unpause} style={{marginLeft:10, background:"#28a745", color:"#fff"}} disabled={!paused}>Unpause</button>
+      </div>
+      <hr />
+      <h3>Rol Yönetimi</h3>
+      <select value={roleType} onChange={e => setRoleType(e.target.value)} style={{width:"40%"}}>
+        <option value="R1">R1 (Mint Yetkisi)</option>
+        <option value="R2">R2 (Pause Yetkisi)</option>
+        <option value="DEFAULT_ADMIN_ROLE">Admin</option>
+      </select>
+      <input placeholder="Adres" value={roleAddress} onChange={e => setRoleAddress(e.target.value)} style={{width:"55%", marginLeft:10}} />
+      <button onClick={addRole} style={{marginLeft:10}}>Rol Ekle</button>
+      <button onClick={removeRole} style={{marginLeft:10}}>Rol Kaldır</button>
+    </div>
+  );
+}
+
+export default App;
