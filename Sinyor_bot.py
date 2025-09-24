@@ -8,11 +8,11 @@ from datetime import datetime, timedelta
 import json
 import mysql.connector
 from datetime import datetime, timedelta
-
+import mariadb
 
 # ================== Telegram ==================
-TOKEN = "8275693889:AAGxq5vm1-mKIAXiHI6Q-r6O3xUEbi53AAc"  # kendi tokenini koy
-CHANNEL_USERNAME = "@Denemelikbet"
+TOKEN = "8426311524:AAG43JLkwCL6o1HX1WNBihGMulNRo-Rw-Jk"  # kendi tokenini koy
+CHANNEL_USERNAME = "@goneresminew"
 
 # ================== Betco API ==================
 BETCO_TOKEN = "caa44f6274c3479fc69f8f1219227053c0e19492ff63f6f3a0194eb51661f234"  # kendi tokenini koy
@@ -31,18 +31,21 @@ ADMIN_IDS = [5695472914, 5947341902, 805254965, 1782604827]
 
 # Token değişim zamanı (başlangıçta None)
 last_token_change = None
-
-conn = mysql.connector.connect(
-    host="localhost",
-    port=3307,          # senin eski sürüm portu
-    user="root",
-    password="root",        # şifren varsa yaz
-    database="101"
-)
-
+try:
+    conn = mariadb.connect(
+        host="127.0.0.1",
+        port=3306,          # senin eski sürüm portu
+        user="root",
+        password="root",        # şifren varsa yaz
+        database="101m"
+    )
+    print("✅ Database bağlantısı başarılı")
+except mariadb.Error as err:
+    print(f"❌ Database bağlantı hatası: {err}")
+    db = None
 # ---- Bonus Alan Kullanıcılar (telegram kontrol)----
 BONUS_USERS_FILE = "bonus_users.json"
-
+print("🚀 Kod başladı")
 def has_taken_bonus(user_id: int) -> bool:
     """Kullanıcı daha önce bonus almış mı kontrol et"""
     try:
@@ -65,13 +68,18 @@ def mark_bonus_given(user_id: int):
         with open(BONUS_USERS_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
+# ================== Özel Grup ID ==================
+SPECIAL_GROUP_ID = -4851033886   # buraya özel grubun ID'sini koy (negatif olabilir!)
+
 # ================== /settoken Komutu ==================
 async def set_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global BETCO_TOKEN, last_token_change
 
-    user_id = update.effective_user.id
-    if user_id not in ADMIN_IDS:
-        await update.message.reply_text("❌ Yetkiniz yok!")
+    chat_id = update.effective_chat.id
+
+    # ✅ Komut sadece özel grupta çalışsın
+    if chat_id != SPECIAL_GROUP_ID:
+        await update.message.reply_text("❌ Bu komutu sadece özel grupta kullanabilirsiniz!")
         return
 
     if not context.args:
@@ -79,24 +87,8 @@ async def set_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     BETCO_TOKEN = context.args[0].strip()
-    last_token_change = datetime.utcnow()  # Değişiklik zamanını kaydet
+    last_token_change = datetime.utcnow()
     await update.message.reply_text("✅ Betco token başarıyla güncellendi!")
-
-# ================== 10 Saat Sonra Hatırlatma Task ==================
-async def token_reminder_task(app):
-    global last_token_change
-    while True:
-        if last_token_change:
-            now = datetime.utcnow()
-            # 10 saat geçmiş mi kontrol et
-            if now - last_token_change >= timedelta(hours=10):
-                for admin_id in ADMIN_IDS:
-                    try:
-                        await app.bot.send_message(admin_id, "⚠️ Betco token 10 saat oldu, güncellemeniz gerekebilir!")
-                    except Exception as e:
-                        print(f"Mesaj gönderilemedi: {e}")
-                last_token_change = None  # Hatırlatma gönderildi, sıfırla
-        await asyncio.sleep(60 * 60)  # 1 saatte bir kontrol et
 
 # ---- Yardımcı: Betco API çağrısı
 async def betco_post(url: str, payload: dict):
@@ -209,7 +201,7 @@ async def send_invite_message(update: Update):
 
 📢 Kanalımıza katılmak için lütfen aşağıdaki butona tıklayınız """
     keyboard = [
-        [InlineKeyboardButton("🎯 Kanala katılmak için hemen tıkla", url="https://t.me/Denemelikbet")],
+        [InlineKeyboardButton("🎯 Kanala katılmak için hemen tıkla", url="https://t.me/goneresminew")],
         [InlineKeyboardButton("🎯 Kanala katıldım", callback_data="joined")]
     ]
     await update.message.reply_photo(photo=photo_url, caption=caption_text, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -316,25 +308,35 @@ async def betco_get_last_login_ip(client_id: int):
         pass
     return None
 
-# --- IP çakışması kontrol fonksiyonu ---
+# --- IP çakışması kontrol fonksiyonu (yeni endpoint + terminal log) ---
 async def check_ip_conflict(ip: str):
+    url = "https://backofficewebadmin.betcostatic.com/api/tr/Client/GetClientsByIPAddress"
     payload = {
-        "Id": "",
-        "FirstName": "",
-        "LastName": "",
         "LoginIP": ip,
-        "IsOrderedDesc": True,
-        "MaxRows": 20,
         "SkeepRows": 0,
-        "IsStartWithSearch": False
+        "MaxRows": 10
     }
-    result = await betco_post(BETCO_GET_CLIENTS_URL, payload)
+
+    result = await betco_post(url, payload)
+
     try:
         count = result.get("Data", {}).get("Count", 0)
         objects = result.get("Data", {}).get("Objects", [])
-        return count, objects
-    except Exception:
-        return 0, []
+
+        # --- Terminal log ---
+        print(f"\n[IP KONTROL] {ip} adresi {count} kullanıcı tarafından kullanılıyor.")
+        for obj in objects:
+            cid = obj.get("ClientId")
+            uname = obj.get("Login") or obj.get("Username")
+            print(f"   → KullanıcıID: {cid}, Username: {uname}")
+
+        # ✅ Eğer count 1’den fazla ise IP çakışması
+        ip_conflict = count > 1
+
+        return ip_conflict, objects
+    except Exception as e:
+        print(f"[HATA][check_ip_conflict] {e}")
+        return False, []
 
 async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_user_id = update.effective_user.id
@@ -370,7 +372,7 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             detail = {}
 
-    # --- 2) Veritabanı sorgusu ---
+     # --- 2) Veritabanı sorgusu ---
     FirstName = (detail.get("FirstName") or user.get("FirstName") or "") or ""
     MiddleName = (detail.get("MiddleName") or user.get("MiddleName") or "") or ""
     LastName = (detail.get("LastName") or user.get("LastName") or "") or ""
@@ -382,15 +384,32 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
         clauses = []
         params = []
 
-        # TC numarası
-        if DocNumber:
-            clauses.append("TC = %s")
-            params.append(DocNumber)
+        # TC numarası → zorunlu
+        if not DocNumber:
+            await update.message.reply_text("❌ Kullanıcının TC bilgisi bulunamadı, doğrulama yapılamıyor.")
+            return
+        clauses.append("TC = %s")
+        params.append(DocNumber)
+
+        # Doğum tarihi → zorunlu
+        birth_str = None
+        if not BirthDate:
+            await update.message.reply_text("❌ Kullanıcının doğum tarihi bulunamadı, doğrulama yapılamıyor.")
+            return
+        try:
+            birthdate_obj = datetime.fromisoformat(BirthDate.split("T")[0])
+            birth_str = f"{birthdate_obj.day}.{birthdate_obj.month}.{birthdate_obj.year}"
+        except Exception:
+            await update.message.reply_text("❌ Doğum tarihi formatı okunamadı.")
+            return
+
+        clauses.append("DOGUMTARIHI = %s")
+        params.append(birth_str)
 
         # ADI kolonu (FirstName + MiddleName)
         full_name = FirstName
         if MiddleName:
-            full_name += f" {MiddleName}"  # araya boşluk ekle
+            full_name += f" {MiddleName}"
         if full_name:
             clauses.append("UPPER(ADI) = %s")
             params.append(full_name.upper())
@@ -399,19 +418,6 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if LastName:
             clauses.append("UPPER(SOYADI) = %s")
             params.append(LastName.upper())
-
-        # Doğum tarihi
-        birth_str = None
-        if BirthDate:
-            try:
-                birthdate_obj = datetime.fromisoformat(BirthDate.split("T")[0])
-                birth_str = f"{birthdate_obj.day}.{birthdate_obj.month}.{birthdate_obj.year}"
-            except Exception:
-                pass
-
-        if birth_str:
-            clauses.append("DOGUMTARIHI = %s")
-            params.append(birth_str)
 
         rows = []
         if clauses:
@@ -424,6 +430,11 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Veritabanı sorgusunda hata: {e}")
         return
 
+    # --- ADD THIS BLOCK ---
+    if not rows:
+        await update.message.reply_text("❌ TC veya diğer bilgiler doğrulanmadı. \n \nEğer yanlış kullanıcı adı yazdıysanız tekrar deneyin. \n \n Eğer bilgileriniz size ait ise lütfen destek ile iletişime geçin.")
+        return
+    # --- END OF ADDED BLOCK ---
     # --- 3) DB eşleşmesi varsa --- 
     if rows:
         await update.message.reply_text("✅ TC doğrulandı, diğer filtrelere geçiliyor...")
@@ -559,22 +570,16 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 print(f"CreatedLocalDate parse hatası: {e}, value={created_date_str}")
 
 # ---- handle_username içinde IP çakışması kontrolü ----
-        if client_id:
-            last_ip = await betco_get_last_login_ip(client_id)
-            if not last_ip:
+    if client_id:
+        last_ip = await betco_get_last_login_ip(client_id)
+        if last_ip:
+            ip_conflict, users_with_same_ip = await check_ip_conflict(last_ip)
+            if ip_conflict:
                 await update.message.reply_text(
-                    "⚠️ Lütfen önce hesabınıza giriş yapınız. Bonus alabilmek için giriş yapmanız gerekmektedir."
+                    f"❌ IP çakışması tespit edildi! Bu IP {len(users_with_same_ip)} kullanıcı tarafından kullanılıyor.\n"
+                    "⚠️ Bu nedenle bonus alamazsınız."
                 )
                 return
-            else:
-                # IP çakışmasını kontrol et
-                count, users_with_same_ip = await check_ip_conflict(last_ip)
-                if count > 1:
-                    await update.message.reply_text(
-                        f"❌ IP çakışması tespit edildi! \n"
-                        "⚠️ Bu nedenle bonus alamazsınız.\n Eğer bu bir hata ise lütfen destek ile iletişime geçin."
-                    )
-                    return  # BONUS VERMEYİ ENGELLE
                 
 
         # Bonus seçenekleri
@@ -697,5 +702,5 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("settoken", set_token))  # ✅ burayı ekle
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_username))
     app.add_handler(CommandHandler("duyuru", broadcast_photo))
-    
+    print("Bot çalışmaya başladı...")
     app.run_polling()
