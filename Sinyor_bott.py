@@ -389,15 +389,32 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
         clauses = []
         params = []
 
-        # TC numarası
-        if DocNumber:
-            clauses.append("TC = %s")
-            params.append(DocNumber)
+        # TC numarası → zorunlu
+        if not DocNumber:
+            await update.message.reply_text("❌ Kullanıcının TC bilgisi bulunamadı, doğrulama yapılamıyor.")
+            return
+        clauses.append("TC = %s")
+        params.append(DocNumber)
+
+        # Doğum tarihi → zorunlu
+        birth_str = None
+        if not BirthDate:
+            await update.message.reply_text("❌ Kullanıcının doğum tarihi bulunamadı, doğrulama yapılamıyor.")
+            return
+        try:
+            birthdate_obj = datetime.fromisoformat(BirthDate.split("T")[0])
+            birth_str = f"{birthdate_obj.day}.{birthdate_obj.month}.{birthdate_obj.year}"
+        except Exception:
+            await update.message.reply_text("❌ Doğum tarihi formatı okunamadı.")
+            return
+
+        clauses.append("DOGUMTARIHI = %s")
+        params.append(birth_str)
 
         # ADI kolonu (FirstName + MiddleName)
         full_name = FirstName
         if MiddleName:
-            full_name += f" {MiddleName}"  # araya boşluk ekle
+            full_name += f" {MiddleName}"
         if full_name:
             clauses.append("UPPER(ADI) = %s")
             params.append(full_name.upper())
@@ -406,19 +423,6 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if LastName:
             clauses.append("UPPER(SOYADI) = %s")
             params.append(LastName.upper())
-
-        # Doğum tarihi
-        birth_str = None
-        if BirthDate:
-            try:
-                birthdate_obj = datetime.fromisoformat(BirthDate.split("T")[0])
-                birth_str = f"{birthdate_obj.day}.{birthdate_obj.month}.{birthdate_obj.year}"
-            except Exception:
-                pass
-
-        if birth_str:
-            clauses.append("DOGUMTARIHI = %s")
-            params.append(birth_str)
 
         rows = []
         if clauses:
@@ -430,6 +434,7 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Veritabanı sorgusunda hata: {e}")
         return
+
 
     # --- 3) DB eşleşmesi varsa --- 
     if rows:
