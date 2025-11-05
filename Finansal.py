@@ -12,6 +12,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes
 from yahooquery import Ticker
 from thefuzz import process
+from bs4 import BeautifulSoup # Web scraping için eklendi
 
 # Lütfen bu TOKEN'ı kendi bot tokeniniz ile değiştirin
 BOT_TOKEN = "7932037979:AAHyz8Lay8tDl7nwb4L4WFXfPihn3NjTRW4" 
@@ -577,6 +578,7 @@ BILINEN_HISSELER = {
 }
 
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{}.IS"
+YAHOO_NEWS_URL = "https://finance.yahoo.com/news/"
 
 # --- TRADINGVIEW TARAMA AYARLARI (1/4: BIST Dip) ---
 TRADINGVIEW_PAYLOAD_BIST_DIP = {
@@ -633,10 +635,10 @@ TRADINGVIEW_PAYLOAD_NASDAQ_DIP = {
                 "operation": {
                     "operator": "or",
                     "operands": [
-                         { "operation": { "operator": "and", "operands": [{"expression": {"left": "type", "operation": "equal", "right": "stock"}}, {"expression": {"left": "typespecs", "operation": "has", "right": ["common"]}}]}},
-                         { "operation": { "operator": "and", "operands": [{"expression": {"left": "type", "operation": "equal", "right": "stock"}}, {"expression": {"left": "typespecs", "operation": "has", "right": ["preferred"]}}]}},
-                         { "operation": { "operator": "and", "operands": [{"expression": {"left": "type", "operation": "equal", "right": "dr"}}]}},
-                         { "operation": { "operator": "and", "operands": [{"expression": {"left": "type", "operation": "equal", "right": "fund"}}, {"expression": {"left": "typespecs", "operation": "has_none_of", "right": ["etf"]}}]}}
+                        { "operation": { "operator": "and", "operands": [{"expression": {"left": "type", "operation": "equal", "right": "stock"}}, {"expression": {"left": "typespecs", "operation": "has", "right": ["common"]}}]}},
+                        { "operation": { "operator": "and", "operands": [{"expression": {"left": "type", "operation": "equal", "right": "stock"}}, {"expression": {"left": "typespecs", "operation": "has", "right": ["preferred"]}}]}},
+                        { "operation": { "operator": "and", "operands": [{"expression": {"left": "type", "operation": "equal", "right": "dr"}}]}},
+                        { "operation": { "operator": "and", "operands": [{"expression": {"left": "type", "operation": "equal", "right": "fund"}}, {"expression": {"left": "typespecs", "operation": "has_none_of", "right": ["etf"]}}]}}
                     ]
                 }
             },
@@ -850,6 +852,7 @@ def plot_advanced_chart(symbol, times, closes):
     times, closes = zip(*filtered)
     closes_np = np.array(closes)
 
+    # Tepe ve dip noktalarını bulma (Algoritma aynı kalır)
     peaks, _ = find_peaks(closes_np, distance=5)
     troughs, _ = find_peaks(-closes_np, distance=5)
 
@@ -860,20 +863,41 @@ def plot_advanced_chart(symbol, times, closes):
     z = np.polyfit(x, closes_np, 1)
     trend = np.poly1d(z)
 
-    plt.figure(figsize=(10,5))
-    plt.plot(times, closes_np, label=f"{symbol} (6 Ay)", linewidth=2)
+    # --- GÖRSEL İYİLEŞTİRMELER BURADA BAŞLIYOR ---
+    plt.figure(figsize=(12,6)) # Grafiğin genel boyutunu artır
+    
+    # 1. Kapanış Çizgisi: Kalınlık artırıldı
+    plt.plot(times, closes_np, label=f"{symbol} (6 Ay)", linewidth=2, color='#1f77b4') 
+    
+    # 2. Tepeler (Üçgenler): Boyut (markersize) artırıldı
     if len(peaks) > 0:
-        plt.scatter(np.array(times)[peaks], closes_np[peaks], color='red', marker='^', label='Tepeler')
+        plt.scatter(np.array(times)[peaks], closes_np[peaks], 
+                    color='red', marker='^', label='Tepeler', 
+                    s=100) # s=markersize, boyut 100 olarak ayarlandı
+        
+    # 3. Dipler (Ters Üçgenler): Boyut (markersize) artırıldı
     if len(troughs) > 0:
-        plt.scatter(np.array(times)[troughs], closes_np[troughs], color='green', marker='v', label='Dipler')
-    plt.axhline(support_level, color='green', linestyle='--', label='Destek (ortalama)')
-    plt.axhline(resistance_level, color='red', linestyle='--', label='Direnç (ortalama)')
-    plt.plot(times, trend(x), color='blue', linestyle='-.', label='Trend çizgisi')
-    plt.title(f"{symbol} - Son 6 Ay Gelişmiş Grafiği")
-    plt.xlabel("Tarih")
-    plt.ylabel("Fiyat (TRY)")
+        plt.scatter(np.array(times)[troughs], closes_np[troughs], 
+                    color='green', marker='v', label='Dipler', 
+                    s=100) # s=markersize, boyut 100 olarak ayarlandı
+        
+    # 4. Destek/Direnç Çizgileri: Kalınlık artırıldı
+    plt.axhline(support_level, color='darkgreen', linestyle='--', linewidth=2, label='Destek (ortalama)')
+    plt.axhline(resistance_level, color='darkred', linestyle='--', linewidth=2, label='Direnç (ortalama)')
+    
+    # 5. Trend Çizgisi: Kalınlık artırıldı
+    plt.plot(times, trend(x), color='#ff7f0e', linestyle='-.', linewidth=2.5, label='Trend çizgisi')
+    
+    # 6. Başlık ve Eksenler: Yazı tipi boyutu artırıldı
+    plt.title(f"{symbol} - Son 6 Ay Gelişmiş Grafiği", fontsize=18, fontweight='bold')
+    plt.xlabel("Tarih", fontsize=12)
+    plt.ylabel("Fiyat (TRY)", fontsize=12)
+    
+    # 7. Legend'ı daha görünür yap
+    plt.legend(loc='best', fontsize=10)
+    
     plt.grid(True, alpha=0.3)
-    plt.legend()
+    plt.xticks(rotation=45)
     plt.tight_layout()
     filename = f"chart_{symbol}_6m_advanced.png"
     plt.savefig(filename)
@@ -948,13 +972,13 @@ def generate_fundamentals_image(symbol, fundamentals):
 
     # Eğer veri yoksa boş tabloyu önle
     if not data:
-         return None
+          return None
 
     table = ax.table(cellText=cell_text, 
-                     colLabels=["Gösterge", "Değer"], 
-                     cellLoc='left', 
-                     loc='center', 
-                     cellColours=cell_colors)
+                      colLabels=["Gösterge", "Değer"], 
+                      cellLoc='left', 
+                      loc='center', 
+                      cellColours=cell_colors)
 
     table.auto_set_font_size(False)
     table.set_fontsize(12)
@@ -1341,12 +1365,83 @@ async def send_potansiyelli_kagitlar_bist(update: Update, context: ContextTypes.
         await query.message.reply_text("❌ Veri çekme başarısız oldu veya kurala uyan sembol bulunamadı.", reply_markup=reply_markup)
 
 
+# ------------------- YENİ HABER FONKSİYONLARI -------------------
+
+def fetch_yahoo_news(limit=5):
+    """
+    Yahoo Finance haber sayfasından belirtilen class'taki son haberleri çeker.
+    """
+    URL = YAHOO_NEWS_URL
+    # Kullanıcının belirttiği karmaşık sınıf adı (Web sitesi değişirse bu değer de değişebilir)
+    TARGET_CLASS = "subtle-link fin-size-small titles noUnderline yf-1211h5v"
+    
+    HEADERS = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+
+    news_list = []
+    
+    try:
+        response = requests.get(URL, headers=HEADERS, timeout=15)
+        response.raise_for_status()
+
+        soup = BeautifulSoup(response.content, 'html.parser')
+        elements = soup.find_all('a', class_=TARGET_CLASS, limit=limit) # Sadece istenen kadarını al
+
+        for element in elements:
+            href = element.get('href')
+            aria_label = element.get('aria-label', 'Başlık Yok')
+            
+            if href:
+                full_href = f"https://finance.yahoo.com{href}" if href.startswith('/') else href
+                
+                news_list.append({
+                    "title": aria_label,
+                    "url": full_href
+                })
+
+    except Exception as e:
+        print(f"❌ Yahoo Haber Çekme Hatası: {e}", file=sys.stderr)
+    
+    return news_list
+
+async def send_yahoo_news(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Yahoo Finance'tan çekilen son 5 haberi Telegram'a mesaj olarak gönderir."""
+    
+    query = update.callback_query
+    await query.answer("Son haberler çekiliyor...")
+    
+    await query.edit_message_text("⏳ **Son Dakika Haberleri** alınıyor...")
+    
+    news_data = fetch_yahoo_news(limit=5)
+    
+    keyboard = [[InlineKeyboardButton("⬅️ Ana Menü", callback_data="BACK_MAIN")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    if news_data:
+        message_text = "📰 **Borsa Haberleri**\n"
+        message_text += "--------------------------------------\n"
+        
+        for i, news in enumerate(news_data):
+            # Telegram'ın Markdown V2 formatına uygun başlık ve link formatı
+            # Başlıkta özel karakter olabileceği için basit bold kullandım, gerekirse kaçış karakterleri uygulanabilir.
+            title_escaped = news['title'].replace('*', '').replace('_', '')
+            message_text += f"{i+1}. **{title_escaped}**\n"
+            message_text += f"[Haberi Oku]({news['url']})\n"
+            message_text += "--------------------------------------\n"
+            
+        await query.message.reply_text(message_text, reply_markup=reply_markup, parse_mode='Markdown')
+        await query.message.delete()
+        
+    else:
+        await query.message.reply_text("❌ Haberler şu anda alınamıyor. Lütfen daha sonra tekrar deneyin.", reply_markup=reply_markup)
+
+
 # ------------------- KANAL ABONELİĞİ KONTROLÜ -------------------
 
 async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Kullanıcının zorunlu kanallara abone olup olmadığını kontrol eder (Mesaj/Start için)."""
     user_id = update.effective_user.id
-    # get_required_channels fonksiyonunun kanal ID'lerini veya @kullanıcıadlarını döndürdüğünü varsayıyoruz.
     required_channels = get_required_channels() 
 
     if not required_channels:
@@ -1356,12 +1451,10 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     for channel_id in required_channels:
         try:
-            # Kanala katılım kontrolü
             member = await context.bot.get_chat_member(chat_id=channel_id, user_id=user_id)
             if member.status not in ['member', 'administrator', 'creator']:
                 missing_channels.append(channel_id)
         except Exception as e:
-            # Hata oluştuysa (örn: username not found, bot kanalda değil, user_id yanlış, vs.), eksik kabul et.
             print(f"Kanal kontrol hatası ({channel_id}): {e}")
             missing_channels.append(channel_id) 
 
@@ -1369,27 +1462,12 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return True 
     else:
         keyboard = []
-        for channel in missing_channels: # Sadece eksik olan kanalları listelemek daha iyi
-            # Kanal formatını belirleme ve link oluşturma
-            
-            # Eğer kanal kimliği @ ile başlıyorsa, genel kullanıcı adıdır.
+        for channel in missing_channels:
             if channel.startswith('@'):
                 link_url = f"https://t.me/{channel.replace('@', '')}"
                 link_name = channel
-            # Eğer sayısal ID veya davet bağlantısı (hash) ise.
-            # Bot genellikle kanal ID'si (örneğin -10012345678) ile çalışır, 
-            # ancak davet için genellikle t.me/joinchat/ hash kullanılır.
-            # Güvenlik için, bu tür ID'lerin bir map'te tutulup linkin oradan çekilmesi en sağlıklısıdır.
-            # Ancak genel varsayım, kanal ID'sini kullanmaktır.
             else:
-                # Botun kanal ID'sine erişim izni varsa, info çekip link oluşturabiliriz
-                # Ancak bu karmaşıklığı artırır. En basit yöntem, dışarıdan doğru linki sağlamaktır.
-                # Varsayım: Girdiğiniz string zaten davet linkinin son kısmıdır (hash).
-                # Eğer kanal ID'si ise, t.me/@ID çalışmaz, bu yüzden sadece @ ile başlayanlara odaklanalım
-                # veya manuel olarak t.me/kanal_kullanici_adi şeklinde map yapısı kuralım.
-                
-                # Şimdilik en güvenli yol: Genel kanallar için kullanıcı adı (@) kullanmak.
-                # Eğer bu kısım çalışmıyorsa, bu kanalın davet linkini get_required_channels() içinde tutmanız gerekir.
+                # Varsayım: Sayısal ID yerine davet linki hash'i kullanıldı.
                 link_url = f"https://t.me/joinchat/{channel}"
                 link_name = f"ID: {channel}"
 
@@ -1399,7 +1477,6 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
         keyboard.append([InlineKeyboardButton("✅ Kontrol Et (Abone Oldum)", callback_data="CHECK_SUBSCRIPTION")])
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        # 'if update.message' kontrolü yerine, update.effective_message kullanmak daha güvenlidir.
         if update.effective_message:
             await update.effective_message.reply_text(
                 "🛑 **Devam etmek için aşağıdaki kanallara abone olmanız gerekmektedir.**\n"
@@ -1431,8 +1508,13 @@ async def check_subscription_for_callback(user_id, context, message):
     else:
         keyboard = []
         for channel in required_channels:
-            link_url = f"https://t.me/{channel}" if channel.startswith('@') else f"https://t.me/joinchat/{channel}"
-            link_name = channel.replace('@', '')
+            if channel.startswith('@'):
+                link_url = f"https://t.me/{channel.replace('@', '')}"
+                link_name = channel
+            else:
+                link_url = f"https://t.me/joinchat/{channel}"
+                link_name = f"ID: {channel}"
+            
             keyboard.append([InlineKeyboardButton(f"➡️ Kanal: {link_name}", url=link_url)])
         
         keyboard.append([InlineKeyboardButton("✅ Kontrol Et (Abone Oldum)", callback_data="CHECK_SUBSCRIPTION")])
@@ -1455,11 +1537,14 @@ def main_menu_keyboard():
             InlineKeyboardButton("📈 Hisse Analizi (Teknik+Temel)", callback_data="HISSE"),
         ],
         [
+            InlineKeyboardButton("📰 Haberler", callback_data="HABERLER"), # YENİ BUTON
+        ],
+        [
             InlineKeyboardButton("📊 Tarama Listeleri", callback_data="TARAMA"),
         ],
         [
             InlineKeyboardButton("📣 Reklam/İletişim", callback_data="REKLAM"),
-        ],
+        ]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -1484,7 +1569,7 @@ async def check_subscription_callback(update: Update, context: ContextTypes.DEFA
 
     if is_subscribed:
         await query.edit_message_text("✅ Abonelik kontrolü başarılı. Menüden bir seçenek seçin:", 
-                                     reply_markup=main_menu_keyboard())
+                                      reply_markup=main_menu_keyboard())
 
 # --- YETKİLİ KANAL YÖNETİM KOMUTLARI ---
 async def add_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1593,6 +1678,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['waiting_for_stock'] = True
         return
 
+    if data == "HABERLER": # YENİ HABER YÖNLENDİRMESİ
+        await send_yahoo_news(update, context)
+        return
+
     if data == "TARAMA":
         keyboard = [
             [InlineKeyboardButton("✅ Dip Taraması (RSI<30, Stoch<20) BIST", callback_data="Dip_Taramasi_BIST")],
@@ -1608,7 +1697,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "REKLAM":
         keyboard = [[InlineKeyboardButton("⬅️ Geri Dön", callback_data="BACK_MAIN")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("📢 Yardım, sorun bildir veya reklam ver seçenekleri için mesaj atın.", reply_markup=reply_markup)
+        await query.edit_message_text("📢 Yardım, sorun bildir veya reklam ver seçenekleri için mesaj atın.\n @Finansalguc1  @UHYborsaumut", reply_markup=reply_markup)
         return
 
     # --- TARAMA BUTONLARI YÖNLENDİRMELERİ ---
@@ -1743,6 +1832,11 @@ def main():
     clear()
     print("Bot modülleri kontrol ediliyor...")
     
+    # Gerekli kütüphanelerin kurulu olduğundan emin olun (requests, beautifulsoup4, thefuzz, yahooquery)
+    # importların en başta yapılması yeterlidir, kontrol için:
+    if 'BeautifulSoup' not in globals():
+         print("❌ BeautifulSoup kütüphanesi yüklenmemiş. 'pip install beautifulsoup4' ile kurunuz.")
+         sys.exit(1)
 
 
     time.sleep(1)
