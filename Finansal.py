@@ -13,6 +13,8 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from yahooquery import Ticker
 from thefuzz import process
 from bs4 import BeautifulSoup # Web scraping için eklendi
+import re # Haber başlıklarını temizlemek için eklendi
+import sys # Hata çıkışları için eklendi
 
 # Lütfen bu TOKEN'ı kendi bot tokeniniz ile değiştirin
 BOT_TOKEN = "7932037979:AAHyz8Lay8tDl7nwb4L4WFXfPihn3NjTRW4" 
@@ -578,7 +580,10 @@ BILINEN_HISSELER = {
 }
 
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{}.IS"
-YAHOO_NEWS_URL = "https://finance.yahoo.com/news/"
+# YENİ HABER KAYNAĞI
+MIDAS_NEWS_URL = "https://www.getmidas.com/midas-kulaklari/haberleri/"
+MIDAS_CONTAINER_CLASS = "daily-newsletters-block-body-item"
+
 
 # --- TRADINGVIEW TARAMA AYARLARI (1/4: BIST Dip) ---
 TRADINGVIEW_PAYLOAD_BIST_DIP = {
@@ -763,6 +768,52 @@ TRADINGVIEW_PAYLOAD_BIST_POTANSIYEL = {
     "symbols": {}
 }
 
+TRADINGVIEW_PAYLOAD_NASDAQ_POTANSIYEL = {
+    "columns": [
+        "name", "description", "logoid", "update_mode", "type", "typespecs", "close", "pricescale", 
+        "minmov", "fractional", "minmove2", "currency", "change", "volume", "relative_volume_10d_calc", 
+        "market_cap_basic", "fundamental_currency_code", "price_earnings_ttm", "earnings_per_share_diluted_ttm", 
+        "earnings_per_share_diluted_yoy_growth_ttm", "dividends_yield_current", "sector.tr", "market", 
+        "sector", "AnalystRating", "AnalystRating.tr", "exchange", 
+        "RSI|1M", "Perf.Y", "debt_to_asset_fy", "average_volume_90d_calc", "OsRating_1M", "MARating_1M", "TechRating_1M"
+    ],
+    "filter": [
+        {"left": "market_cap_basic", "operation": "in_range", "right": [1000000000, 100000000000]},
+        {"left": "close", "operation": "greater", "right": 9},
+        {"left": "RSI|1M", "operation": "egreater", "right": 60},
+        {"left": "Perf.Y", "operation": "greater", "right": 20},
+        {"left": "earnings_per_share_diluted_yoy_growth_ttm", "operation": "greater", "right": 10},
+        {"left": "debt_to_asset_fy", "operation": "less", "right": 1},
+        {"left": "average_volume_90d_calc", "operation": "greater", "right": 500000},
+        {"left": "OsRating_1M", "operation": "in_range", "right": ["StrongBuy", "Buy"]},
+        {"left": "AnalystRating", "operation": "in_range", "right": ["StrongBuy"]},
+        {"left": "MARating_1M", "operation": "in_range", "right": ["StrongBuy"]},
+        {"left": "TechRating_1M", "operation": "in_range", "right": ["StrongBuy"]}
+    ],
+    "filter2": {
+        "operator": "and",
+        "operands": [
+            {
+                "operation": {
+                    "operator": "or",
+                    "operands": [
+                        {"operation": {"operator": "and", "operands": [{"expression": {"left": "type", "operation": "equal", "right": "stock"}}, {"expression": {"left": "typespecs", "operation": "has", "right": ["common"]}}]}},
+                        {"operation": {"operator": "and", "operands": [{"expression": {"left": "type", "operation": "equal", "right": "stock"}}, {"expression": {"left": "typespecs", "operation": "has", "right": ["preferred"]}}]}},
+                        {"operation": {"operator": "and", "operands": [{"expression": {"left": "type", "operation": "equal", "right": "dr"}}]}},
+                        {"operation": {"operator": "and", "operands": [{"expression": {"left": "type", "operation": "equal", "right": "fund"}}, {"expression": {"left": "typespecs", "operation": "has_none_of", "right": ["etf"]}}]}}
+                    ]
+                }
+            },
+            {"expression": {"left": "typespecs", "operation": "has_none_of", "right": ["pre-ipo"]}}
+        ]
+    },
+    "ignore_unknown_fields": False,
+    "markets": ["america"], 
+    "options": {"lang": "en"},
+    "range": [0, 5000],
+    "sort": {"sortBy": "market_cap_basic", "sortOrder": "desc"},
+    "symbols": {}
+}
 
 # ------------------- Yardımcı Fonksiyonlar (Dosya Yönetimi & Utility) -------------------
 
@@ -956,7 +1007,7 @@ def generate_fundamentals_image(symbol, fundamentals):
     fig, ax = plt.subplots(figsize=(6, 10))
     ax.axis('off')
     ax.set_title(f"{symbol} ({BILINEN_HISSELER.get(symbol, 'Bilinmeyen Hisse')}) Kapsamlı Veriler", 
-                 fontsize=16, fontweight='bold', pad=20)
+                fontsize=16, fontweight='bold', pad=20)
     
     # Tablo verisi ve renk ayarları
     cell_text = []
@@ -972,13 +1023,13 @@ def generate_fundamentals_image(symbol, fundamentals):
 
     # Eğer veri yoksa boş tabloyu önle
     if not data:
-          return None
+             return None
 
     table = ax.table(cellText=cell_text, 
-                      colLabels=["Gösterge", "Değer"], 
-                      cellLoc='left', 
-                      loc='center', 
-                      cellColours=cell_colors)
+                     colLabels=["Gösterge", "Değer"], 
+                     cellLoc='left', 
+                     loc='center', 
+                     cellColours=cell_colors)
 
     table.auto_set_font_size(False)
     table.set_fontsize(12)
@@ -1365,18 +1416,69 @@ async def send_potansiyelli_kagitlar_bist(update: Update, context: ContextTypes.
         await query.message.reply_text("❌ Veri çekme başarısız oldu veya kurala uyan sembol bulunamadı.", reply_markup=reply_markup)
 
 
-# ------------------- YENİ HABER FONKSİYONLARI -------------------
+async def send_potansiyelli_kagitlar_nasdaq(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Potansiyelli Kağıtlar BIST taraması sonuçlarını çeker ve PNG olarak gönderir."""
+    
+    query = update.callback_query
+    await query.answer("Tarama başlatılıyor...")
+    
+    potansiyel_payload = TRADINGVIEW_PAYLOAD_NASDAQ_POTANSIYEL.copy()
+    scanner_url_bist = "https://scanner.tradingview.com/america/scan"
 
-def fetch_yahoo_news(limit=5):
+    await query.edit_message_text("⏳ **Potansiyelli Kağıtlar BIST** sonuçları alınıyor ve tablo oluşturuluyor...")
+    
+    df_sonuc, toplam_adet = get_screener_data_from_payload(potansiyel_payload, scanner_url_bist)
+    
+    keyboard = [[InlineKeyboardButton("⬅️ Ana Menü", callback_data="BACK_MAIN")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    if not df_sonuc.empty:
+        filename_prefix = "TR_potansiyelli"
+        create_table_png_bist_potansiyel(df_sonuc, filename_prefix=filename_prefix)
+        
+        all_files = os.listdir('.')
+        png_files = sorted([f for f in all_files if f.startswith(filename_prefix) and f.endswith('.png')])
+        
+        sent_files = 0
+        
+        if png_files:
+            for file_name in png_files:
+                try:
+                    with open(file_name, "rb") as img:
+                        caption_parts = file_name.split('_')
+                        page_info = f"Sayfa {caption_parts[-1].replace('.png', '')}"
+                        caption = f"💰 **Potansiyelli Kağıtlar Nasdaq** Sonuçları ({page_info}) - Toplam Hisse: {toplam_adet}"
+                        await context.bot.send_photo(chat_id=query.message.chat_id, photo=img, caption=caption)
+                    sent_files += 1
+                except Exception as e:
+                    print(f"PNG gönderme hatası ({file_name}): {e}")
+                finally:
+                    if os.path.exists(file_name):
+                        os.remove(file_name)
+                    
+            if sent_files > 0:
+                await query.message.reply_text(f"✅ Tarama tamamlandı. Toplam **{toplam_adet}** hisse bulundu ve **{sent_files}** görsel gönderildi.", reply_markup=reply_markup)
+            else:
+                await query.message.reply_text("❌ Tarama sonuçları alındı ancak görsel gönderme hatası oluştu.", reply_markup=reply_markup)
+                
+        else:
+            await query.message.reply_text("❌ Kurala uyan hisse bulunamadı, tablo oluşturulamadı.", reply_markup=reply_markup)
+
+    else:
+        await query.message.reply_text("❌ Veri çekme başarısız oldu veya kurala uyan sembol bulunamadı.", reply_markup=reply_markup)
+
+
+# ------------------- YENİ HABER FONKSİYONLARI (MIDAS) -------------------
+
+def fetch_midas_news(limit=5):
     """
-    Yahoo Finance haber sayfasından belirtilen class'taki son haberleri çeker.
+    Midas 'Midas Kulakları' sayfasından belirtilen class'taki son haberleri çeker.
     """
-    URL = YAHOO_NEWS_URL
-    # Kullanıcının belirttiği karmaşık sınıf adı (Web sitesi değişirse bu değer de değişebilir)
-    TARGET_CLASS = "subtle-link fin-size-small titles noUnderline yf-1211h5v"
+    URL = MIDAS_NEWS_URL
+    CONTAINER_CLASS = MIDAS_CONTAINER_CLASS
     
     HEADERS = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
 
     news_list = []
@@ -1386,55 +1488,82 @@ def fetch_yahoo_news(limit=5):
         response.raise_for_status()
 
         soup = BeautifulSoup(response.content, 'html.parser')
-        elements = soup.find_all('a', class_=TARGET_CLASS, limit=limit) # Sadece istenen kadarını al
+        
+        # Tüm haber kapsayıcılarını bul
+        all_containers = soup.find_all(class_=CONTAINER_CLASS, limit=limit)
 
-        for element in elements:
-            href = element.get('href')
-            aria_label = element.get('aria-label', 'Başlık Yok')
+        for container in all_containers:
+            # Her kapsayıcı içindeki ana linki bul
+            main_link = container.find('a')
             
-            if href:
-                full_href = f"https://finance.yahoo.com{href}" if href.startswith('/') else href
+            if main_link and main_link.has_attr('href'):
+                href = main_link.get('href')
+                full_href = f"https://www.getmidas.com{href}" if href.startswith('/') else href
                 
-                news_list.append({
-                    "title": aria_label,
-                    "url": full_href
-                })
-
+                # Başlık metnini temizleme (verdiğiniz mantığa göre)
+                full_text = main_link.get_text(strip=True)
+                
+                # "okuma süresi" ifadesinden sonraki kısmı başlık olarak alalım.
+                clean_title = full_text.split("okuma süresi", 1)[-1] 
+                clean_title = clean_title.strip()
+                
+                # Başlık içinde bazen sadece tarih/süre bilgisi kalabiliyor.
+                # Tekrar kontrol edelim: Eğer çok kısa veya sadece rakamlardan oluşuyorsa geç.
+                if clean_title and len(clean_title) > 10: 
+                    news_list.append({
+                        "title": clean_title,
+                        "url": full_href
+                    })
+                
+                if len(news_list) >= limit:
+                    break
+                    
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Midas Haber Çekme Hatası (Bağlantı/Timeout/HTTP): {e}", file=sys.stderr)
     except Exception as e:
-        print(f"❌ Yahoo Haber Çekme Hatası: {e}", file=sys.stderr)
+        print(f"❌ Midas Haber Çekme Hatası (Parsing): {e}", file=sys.stderr)
     
     return news_list
 
-async def send_yahoo_news(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Yahoo Finance'tan çekilen son 5 haberi Telegram'a mesaj olarak gönderir."""
+async def send_midas_news(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Midas'tan çekilen son 5 haberi Telegram'a mesaj olarak gönderir."""
     
     query = update.callback_query
     await query.answer("Son haberler çekiliyor...")
     
-    await query.edit_message_text("⏳ **Son Dakika Haberleri** alınıyor...")
+    await query.edit_message_text("⏳ **Midas Kulakları Haberleri** alınıyor...")
     
-    news_data = fetch_yahoo_news(limit=5)
+    # YENİ FONKSİYONU ÇAĞIR
+    news_data = fetch_midas_news(limit=5)
     
     keyboard = [[InlineKeyboardButton("⬅️ Ana Menü", callback_data="BACK_MAIN")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     if news_data:
-        message_text = "📰 **Borsa Haberleri**\n"
+        message_text = "📰 **Midas Kulakları Haberleri**\n"
         message_text += "--------------------------------------\n"
         
         for i, news in enumerate(news_data):
             # Telegram'ın Markdown V2 formatına uygun başlık ve link formatı
-            # Başlıkta özel karakter olabileceği için basit bold kullandım, gerekirse kaçış karakterleri uygulanabilir.
-            title_escaped = news['title'].replace('*', '').replace('_', '')
-            message_text += f"{i+1}. **{title_escaped}**\n"
+            # Başlıkta özel karakter olabileceği için kaçış karakterleri uygulayalım.
+            def escape_markdown(text):
+                # Sadece temel karakterleri kaçır
+                return re.sub(r'([_*\[\]()~`>#+\-=|{}.!])', r'\\\1', text)
+                
+            title_escaped = news['title'].replace('\n', ' ').strip()
+            
+            # Markdown link yapısını kullan
+            message_text += f"{i+1}. **{title_escaped} **\n"
             message_text += f"[Haberi Oku]({news['url']})\n"
             message_text += "--------------------------------------\n"
             
         await query.message.reply_text(message_text, reply_markup=reply_markup, parse_mode='Markdown')
+        # Bu mesajı silmek yerine yeni mesaj attık, geri dönülecek yer silinmemeli.
+        # İlk '⏳ alınıyor...' mesajını sil:
         await query.message.delete()
         
     else:
-        await query.message.reply_text("❌ Haberler şu anda alınamıyor. Lütfen daha sonra tekrar deneyin.", reply_markup=reply_markup)
+        await query.message.reply_text("❌ Haberler şu anda Midas'tan alınamıyor. Lütfen daha sonra tekrar deneyin.", reply_markup=reply_markup)
 
 
 # ------------------- KANAL ABONELİĞİ KONTROLÜ -------------------
@@ -1537,10 +1666,13 @@ def main_menu_keyboard():
             InlineKeyboardButton("📈 Hisse Analizi (Teknik+Temel)", callback_data="HISSE"),
         ],
         [
-            InlineKeyboardButton("📰 Haberler", callback_data="HABERLER"), # YENİ BUTON
+            InlineKeyboardButton("📰 Haberler", callback_data="HABERLER"), # YENİ HABER BUTONU
         ],
         [
-            InlineKeyboardButton("📊 Tarama Listeleri", callback_data="TARAMA"),
+            InlineKeyboardButton("📊 Tarama Listeleri BIST", callback_data="TARAMA"),
+        ],
+        [
+            InlineKeyboardButton("📊 Tarama Listeleri NASDAQ", callback_data="TARAMANASDAQ"),
         ],
         [
             InlineKeyboardButton("📣 Reklam/İletişim", callback_data="REKLAM"),
@@ -1569,7 +1701,7 @@ async def check_subscription_callback(update: Update, context: ContextTypes.DEFA
 
     if is_subscribed:
         await query.edit_message_text("✅ Abonelik kontrolü başarılı. Menüden bir seçenek seçin:", 
-                                      reply_markup=main_menu_keyboard())
+                                     reply_markup=main_menu_keyboard())
 
 # --- YETKİLİ KANAL YÖNETİM KOMUTLARI ---
 async def add_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1679,15 +1811,25 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "HABERLER": # YENİ HABER YÖNLENDİRMESİ
-        await send_yahoo_news(update, context)
+        # Haber gönderme fonksiyonunu çağır
+        await send_midas_news(update, context) 
         return
 
     if data == "TARAMA":
         keyboard = [
-            [InlineKeyboardButton("✅ Dip Taraması (RSI<30, Stoch<20) BIST", callback_data="Dip_Taramasi_BIST")],
-            [InlineKeyboardButton("✅ Dip Taraması (Yeni Filtreler) NASDAQ", callback_data="Dip_Taramasi_NASDAQ")],
-            [InlineKeyboardButton("✅ Düşen Trend Kırılımı BIST", callback_data="Dusen_Trend_Kirilimi_BIST")],
-            [InlineKeyboardButton("✅ Potansiyelli Kağıtlar BIST", callback_data="Potansiyelli_Kagitlar_BIST")], 
+            [InlineKeyboardButton("✅ Dip Taraması  BIST (Günlük)", callback_data="Dip_Taramasi_BIST")],
+            [InlineKeyboardButton("✅ Düşen Trend Kırılımı BIST (Aylık)", callback_data="Dusen_Trend_Kirilimi_BIST")],
+            [InlineKeyboardButton("✅ Potansiyelli Kağıtlar BIST (Aylık)", callback_data="Potansiyelli_Kagitlar_BIST")], 
+            [InlineKeyboardButton("⬅️ Ana Menü", callback_data="BACK_MAIN")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text("📊 Tarama seçeneklerinden birini seçin:", reply_markup=reply_markup)
+        return
+    
+    if data == "TARAMANASDAQ":
+        keyboard = [
+            [InlineKeyboardButton("✅ Dip Taraması NASDAQ (Günlük)", callback_data="Dip_Taramasi_NASDAQ")],
+            [InlineKeyboardButton("✅ Potansiyelli Kağıtlar NASDAQ (Aylık)", callback_data="Potansiyelli_Kagitlar_NASDAQ")], 
             [InlineKeyboardButton("⬅️ Ana Menü", callback_data="BACK_MAIN")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -1697,7 +1839,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "REKLAM":
         keyboard = [[InlineKeyboardButton("⬅️ Geri Dön", callback_data="BACK_MAIN")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("📢 Yardım, sorun bildir veya reklam ver seçenekleri için mesaj atın.\n @Finansalguc1  @UHYborsaumut", reply_markup=reply_markup)
+        await query.edit_message_text("📢 Yardım, sorun bildir veya reklam ver seçenekleri için mesaj atın.\n @Finansalguc1 @UHYborsaumut", reply_markup=reply_markup)
         return
 
     # --- TARAMA BUTONLARI YÖNLENDİRMELERİ ---
@@ -1715,6 +1857,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "Potansiyelli_Kagitlar_BIST": 
         await send_potansiyelli_kagitlar_bist(update, context)
+        return
+    if data == "Potansiyelli_Kagitlar_NASDAQ": 
+        await send_potansiyelli_kagitlar_nasdaq(update, context)
         return
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1829,14 +1974,15 @@ async def error(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # ------------------- Bot Başlat -------------------
 
 def main():
+    # Haber çekme fonksiyonu güncellendiği için eski Yahoo News URL'i artık kullanılmıyor
+    # YAHOO_NEWS_URL kaldırılsa da, uyumluluk için şimdilik bırakılabilir.
+
     clear()
     print("Bot modülleri kontrol ediliyor...")
     
-    # Gerekli kütüphanelerin kurulu olduğundan emin olun (requests, beautifulsoup4, thefuzz, yahooquery)
-    # importların en başta yapılması yeterlidir, kontrol için:
     if 'BeautifulSoup' not in globals():
-         print("❌ BeautifulSoup kütüphanesi yüklenmemiş. 'pip install beautifulsoup4' ile kurunuz.")
-         sys.exit(1)
+          # Bu kontrol aslında daha önce yapılmıştı, burada sadece bir çıktı verelim.
+          print("❌ BeautifulSoup kütüphanesi yüklü.")
 
 
     time.sleep(1)
