@@ -879,6 +879,31 @@ def remove_channel_from_file(channel_id: str):
         return True
     return False
 
+# --- YENİ EKLENEN FİLİGRAN FONKSİYONU ---
+def add_watermark(fig, text="@Finansalgucbot"):
+    """
+    Matplotlib figürüne silik bir filigran (watermark) ekler.
+    Sağ üst çapraz konumlandırma kullanır.
+    """
+    # Filigranı figürün içine yerleştirmek için fig.text kullanılır
+    # 0.95: X ekseninde sağa yakın (sağ üst)
+    # 0.95: Y ekseninde yukarı yakın (sağ üst)
+    # rotation=15: Hafif çapraz eğim
+    # fontsize=30: Büyük font boyutu
+    # color='gray': Gri renk
+    # alpha=0.3: Silik görünmesi için şeffaflık
+    fig.text(
+        0.5, 0.90, 
+        text, 
+        fontsize=30, 
+        color='gray', 
+        alpha=0.3, 
+        ha='right', 
+        va='top', 
+        rotation=15,
+        transform=fig.transFigure
+    )
+
 # ------------------- Finansal Veri Çekme Fonksiyonları (Yahooquery) -------------------
 
 def fetch_chart_data(symbol: str):
@@ -915,7 +940,7 @@ def plot_advanced_chart(symbol, times, closes):
     trend = np.poly1d(z)
 
     # --- GÖRSEL İYİLEŞTİRMELER BURADA BAŞLIYOR ---
-    plt.figure(figsize=(12,6)) # Grafiğin genel boyutunu artır
+    fig, plt.sub = plt.subplots(figsize=(12,6)) # fig objesi eklendi
     
     # 1. Kapanış Çizgisi: Kalınlık artırıldı
     plt.plot(times, closes_np, label=f"{symbol} (6 Ay)", linewidth=2, color='#1f77b4') 
@@ -949,10 +974,14 @@ def plot_advanced_chart(symbol, times, closes):
     
     plt.grid(True, alpha=0.3)
     plt.xticks(rotation=45)
+
+    # 8. FİLİGRAN EKLEME
+    add_watermark(fig)
+    
     plt.tight_layout()
     filename = f"chart_{symbol}_6m_advanced.png"
     plt.savefig(filename)
-    plt.close()
+    plt.close(fig) # fig objesi ile kapatıldı
     return filename
 
 def format_value(value, is_percentage=False):
@@ -1007,7 +1036,7 @@ def generate_fundamentals_image(symbol, fundamentals):
     fig, ax = plt.subplots(figsize=(6, 10))
     ax.axis('off')
     ax.set_title(f"{symbol} ({BILINEN_HISSELER.get(symbol, 'Bilinmeyen Hisse')}) Kapsamlı Veriler", 
-                fontsize=16, fontweight='bold', pad=20)
+                 fontsize=16, fontweight='bold', pad=20)
     
     # Tablo verisi ve renk ayarları
     cell_text = []
@@ -1026,10 +1055,10 @@ def generate_fundamentals_image(symbol, fundamentals):
              return None
 
     table = ax.table(cellText=cell_text, 
-                     colLabels=["Gösterge", "Değer"], 
-                     cellLoc='left', 
-                     loc='center', 
-                     cellColours=cell_colors)
+                      colLabels=["Gösterge", "Değer"], 
+                      cellLoc='left', 
+                      loc='center', 
+                      cellColours=cell_colors)
 
     table.auto_set_font_size(False)
     table.set_fontsize(12)
@@ -1040,9 +1069,13 @@ def generate_fundamentals_image(symbol, fundamentals):
         if cell_text[i][1] == "":
             table[i, 0].set_text_props(weight='bold', color='black')
             table[i, 1].set_text_props(weight='bold', color='black')
+
+    # FİLİGRAN EKLEME
+    add_watermark(fig)
+    
     filename = f"fundamentals_{symbol}_comprehensive.png"
     plt.savefig(filename, bbox_inches='tight', dpi=150)
-    plt.close()
+    plt.close(fig)
     return filename
 
 
@@ -1151,7 +1184,7 @@ def create_table_png_base(df, filename_prefix, title, currency_symbol):
 
         while len(right) < mid:
             right = pd.concat([right, pd.DataFrame([["", ""]] * (mid - len(right)), columns=right.columns)], ignore_index=True)
-        
+            
         combined = pd.DataFrame({
             "Hisse": left["Hisse"],
             col_fiyat: left[col_fiyat],
@@ -1189,6 +1222,9 @@ def create_table_png_base(df, filename_prefix, title, currency_symbol):
                 cell.set_text_props(color="white")
             cell.set_edgecolor("#444444")
 
+        # FİLİGRAN EKLEME
+        add_watermark(fig)
+
         plt.tight_layout()
         file_name = f"{filename_prefix}_{page + 1}.png"
         plt.savefig(file_name, dpi=300, bbox_inches="tight", facecolor=fig.get_facecolor())
@@ -1206,6 +1242,9 @@ def create_table_png_bist_trend(df, filename_prefix="TR_trend_kirilimi"):
 
 def create_table_png_bist_potansiyel(df, filename_prefix="TR_potansiyelli"):
     return create_table_png_base(df, filename_prefix, "Potansiyelli Kağıtlar BIST", "₺")
+    
+def create_table_png_nasdaq_potansiyel(df, filename_prefix="US_potansiyelli"):
+    return create_table_png_base(df, filename_prefix, "Potansiyelli Kağıtlar NASDAQ", "$")
 
 
 # ------------------- TRADINGVIEW ASENKRON TARAMA HANDLER'LARI -------------------
@@ -1417,24 +1456,25 @@ async def send_potansiyelli_kagitlar_bist(update: Update, context: ContextTypes.
 
 
 async def send_potansiyelli_kagitlar_nasdaq(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Potansiyelli Kağıtlar BIST taraması sonuçlarını çeker ve PNG olarak gönderir."""
+    """Potansiyelli Kağıtlar NASDAQ taraması sonuçlarını çeker ve PNG olarak gönderir."""
     
     query = update.callback_query
     await query.answer("Tarama başlatılıyor...")
     
     potansiyel_payload = TRADINGVIEW_PAYLOAD_NASDAQ_POTANSIYEL.copy()
-    scanner_url_bist = "https://scanner.tradingview.com/america/scan"
+    scanner_url_nasdaq = "https://scanner.tradingview.com/america/scan" # URL düzeltildi
 
-    await query.edit_message_text("⏳ **Potansiyelli Kağıtlar BIST** sonuçları alınıyor ve tablo oluşturuluyor...")
+    await query.edit_message_text("⏳ **Potansiyelli Kağıtlar NASDAQ** sonuçları alınıyor ve tablo oluşturuluyor...")
     
-    df_sonuc, toplam_adet = get_screener_data_from_payload(potansiyel_payload, scanner_url_bist)
+    df_sonuc, toplam_adet = get_screener_data_from_payload(potansiyel_payload, scanner_url_nasdaq)
     
     keyboard = [[InlineKeyboardButton("⬅️ Ana Menü", callback_data="BACK_MAIN")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     if not df_sonuc.empty:
-        filename_prefix = "TR_potansiyelli"
-        create_table_png_bist_potansiyel(df_sonuc, filename_prefix=filename_prefix)
+        # HATA DÜZELTMESİ: Doğru PNG oluşturma fonksiyonu ve dosya öneki kullanılıyor
+        filename_prefix = "US_potansiyelli" 
+        create_table_png_nasdaq_potansiyel(df_sonuc, filename_prefix=filename_prefix)
         
         all_files = os.listdir('.')
         png_files = sorted([f for f in all_files if f.startswith(filename_prefix) and f.endswith('.png')])
@@ -1447,7 +1487,8 @@ async def send_potansiyelli_kagitlar_nasdaq(update: Update, context: ContextType
                     with open(file_name, "rb") as img:
                         caption_parts = file_name.split('_')
                         page_info = f"Sayfa {caption_parts[-1].replace('.png', '')}"
-                        caption = f"💰 **Potansiyelli Kağıtlar Nasdaq** Sonuçları ({page_info}) - Toplam Hisse: {toplam_adet}"
+                        # HATA DÜZELTMESİ: Başlıkta "NASDAQ" kullanılıyor
+                        caption = f"💰 **Potansiyelli Kağıtlar NASDAQ** Sonuçları ({page_info}) - Toplam Hisse: {toplam_adet}"
                         await context.bot.send_photo(chat_id=query.message.chat_id, photo=img, caption=caption)
                     sent_files += 1
                 except Exception as e:
@@ -1974,15 +2015,11 @@ async def error(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # ------------------- Bot Başlat -------------------
 
 def main():
-    # Haber çekme fonksiyonu güncellendiği için eski Yahoo News URL'i artık kullanılmıyor
-    # YAHOO_NEWS_URL kaldırılsa da, uyumluluk için şimdilik bırakılabilir.
-
     clear()
     print("Bot modülleri kontrol ediliyor...")
     
     if 'BeautifulSoup' not in globals():
-          # Bu kontrol aslında daha önce yapılmıştı, burada sadece bir çıktı verelim.
-          print("❌ BeautifulSoup kütüphanesi yüklü.")
+             print("❌ BeautifulSoup kütüphanesi yüklü.")
 
 
     time.sleep(1)
