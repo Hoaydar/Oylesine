@@ -9,27 +9,27 @@ import json
 import mysql.connector
 from datetime import datetime, timedelta
 import mariadb
+import time
+import sys
+import os
 
 # ================== Telegram ==================
-TOKEN = "8275693889:AAGxq5vm1-mKIAXiHI6Q-r6O3xUEbi53AAc"  # kendi tokenini koy
+TOKEN = "8275693889:AAGxq5vm1-mKIAXiHI6Q-r6O3xUEbi53AAc"
 CHANNEL_USERNAME = "@goneresminew"
 
 # ================== Betco API ==================
-BETCO_TOKEN = "caa44f6274c3479fc69f8f1219227053c0e19492ff63f6f3a0194eb51661f234"  # kendi tokenini koy
+BETCO_TOKEN = "caa44f6274c3479fc69f8f1219227053c0e19492ff63f6f3a0194eb51661f234"
 BETCO_GET_CLIENTS_URL = "https://backofficewebadmin.betcostatic.com/api/tr/Client/GetClients"
 BETCO_ADD_CLIENT_BONUS_URL = "https://backofficewebadmin.betcostatic.com/api/tr/Client/AddClientToBonus"
 
 # Bonus tipleri -> PartnerBonusId ve Amount
 BONUS_MAP = {
-    "freespin": {"PartnerBonusId": 604382, "Amount": "500"},  # 500 FreeSpin
-    "freebet": {"PartnerBonusId": 604383, "Amount": "50"}     # 50 FreeBet (doğru ID'yi sen koy)
+    "freespin": {"PartnerBonusId": 604382, "Amount": "500"},
+    "freebet": {"PartnerBonusId": 604383, "Amount": "50"}
 }
 
 # ================== Token Yönetimi ==================
-
 ADMIN_IDS = [5695472914, 5947341902, 805254965, 1782604827]
-
-# Token değişim zamanı (başlangıçta None)
 last_token_change = None
 
 # ================== Database Connection Management ==================
@@ -38,11 +38,12 @@ def get_db_connection():
     try:
         conn = mariadb.connect(
             host="127.0.0.1",
-            port=3306,          # senin eski sürüm portu
+            port=3306,
             user="root",
-            password="root",        # şifren varsa yaz
+            password="root",
             database="101M2",
-            autocommit=True
+            autocommit=True,
+            reconnect=True  # ✅ Otomatik reconnect özelliği
         )
         print("✅ Yeni database bağlantısı başarılı")
         return conn
@@ -53,25 +54,40 @@ def get_db_connection():
 def ensure_db_connection():
     """Mevcut bağlantıyı kontrol et, gerekirse yeniden bağlan"""
     global conn
-    try:
-        # Bağlantıyı test et
-        if conn is None or not conn.is_connected():
-            print("🔁 Database bağlantısı kopmuş, yeniden bağlanılıyor...")
-            conn = get_db_connection()
+    max_retries = 3
+    retry_delay = 2
+    
+    for attempt in range(max_retries):
+        try:
+            # Bağlantıyı test et
+            if conn is None or not conn.is_connected():
+                print("🔁 Database bağlantısı kopmuş, yeniden bağlanılıyor...")
+                conn = get_db_connection()
+                if conn:
+                    return conn
+                else:
+                    raise mariadb.Error("Bağlantı kurulamadı")
+            
+            # Basit bir test sorgusu çalıştır
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.close()
             return conn
-        
-        # Basit bir test sorgusu çalıştır
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1")
-        cursor.close()
-        return conn
-    except mariadb.Error as err:
-        print(f"❌ Database bağlantı test hatası: {err}, yeniden bağlanılıyor...")
-        conn = get_db_connection()
-        return conn
+            
+        except mariadb.Error as err:
+            print(f"❌ Database bağlantı denemesi {attempt + 1}/{max_retries} başarısız: {err}")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+                conn = get_db_connection()
+            else:
+                print("❌ Tüm database bağlantı denemeleri başarısız")
+                return None
 
 # İlk bağlantıyı kur
 conn = get_db_connection()
+if conn is None:
+    print("❌ İlk bağlantı kurulamadı, bot başlatılamıyor")
+    sys.exit(1)
 
 # ---- Bonus Alan Kullanıcılar (telegram kontrol)----
 BONUS_USERS_FILE = "bonus_users.json"
@@ -100,7 +116,7 @@ def mark_bonus_given(user_id: int):
             json.dump(data, f, ensure_ascii=False, indent=2)
 
 # ================== /settoken Komutu ==================
-SPECIAL_GROUP_ID = -4876211377 
+SPECIAL_GROUP_ID = -4876211377
 
 async def set_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global BETCO_TOKEN, last_token_change
@@ -108,10 +124,8 @@ async def set_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
 
-    # ✅ 1) Özel grup kontrolü
     if chat_id == SPECIAL_GROUP_ID:
-        pass  # özel grupsa direkt izin ver
-    # ✅ 2) DM kontrolü (private chat + admin id listesi)
+        pass
     elif update.effective_chat.type == "private":
         if user_id not in ADMIN_IDS:
             await update.message.reply_text("❌ Bu komutu kullanmaya yetkiniz yok!")
@@ -120,33 +134,15 @@ async def set_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Bu komut sadece özel grupta veya admin DM üzerinden çalışır!")
         return
 
-    # Argüman var mı kontrol et
     if not context.args:
         await update.message.reply_text("❌ Kullanım: /settoken <yeni_token>")
         return
 
-    # ✅ Tokeni güncelle
     BETCO_TOKEN = context.args[0].strip()
     last_token_change = datetime.utcnow()
     await update.message.reply_text("✅ Betco token başarıyla güncellendi!")
 
-# ================== 10 Saat Sonra Hatırlatma Task ==================
-async def token_reminder_task(app):
-    global last_token_change
-    while True:
-        if last_token_change:
-            now = datetime.utcnow()
-            # 10 saat geçmiş mi kontrol et
-            if now - last_token_change >= timedelta(hours=10):
-                for admin_id in ADMIN_IDS:
-                    try:
-                        await app.bot.send_message(admin_id, "⚠️ Betco token 10 saat oldu, güncellemeniz gerekebilir!")
-                    except Exception as e:
-                        print(f"Mesaj gönderilemedi: {e}")
-                last_token_change = None  # Hatırlatma gönderildi, sıfırla
-        await asyncio.sleep(60 * 60)  # 1 saatte bir kontrol et
-
-# ---- Yardımcı: Betco API çağrısı
+# ---- Yardımcı: Betco API çağrısı ----
 async def betco_post(url: str, payload: dict):
     headers = {
         "authentication": BETCO_TOKEN,
@@ -181,7 +177,7 @@ async def betco_post(url: str, payload: dict):
         except Exception as e:
             return {"HasError": True, "AlertMessage": f"Request exception: {e}"}
 
-# ---- Kullanıcı arama fonksiyonları (aynı kalıyor) ----
+# ---- Kullanıcı arama fonksiyonları ----
 def extract_users(data):
     if isinstance(data, list):
         return data
@@ -295,22 +291,6 @@ async def give_bonus(client_id: int, bonus_type: str):
     resp = await betco_post(BETCO_ADD_CLIENT_BONUS_URL, payload)
     return resp
 
-# ================== FreeBet Yükleme Fonksiyonu ==================
-async def give_freebet(client_id: int):
-    payload = {
-        "ClientId": client_id,
-        "MessageChannel": None,
-        "Amount": "50",  # 50 FreeBet
-        "MessageSubject": None,
-        "MessageContent": None,
-        "Count": None,
-        "PartnerBonusId": 604383  # FreeBet bonus ID'si
-    }
-
-    print(f"[FREEBET REQUEST] client_id={client_id}, payload={payload}")
-    resp = await betco_post(BETCO_ADD_CLIENT_BONUS_URL, payload)
-    return resp
-
 # ---- handle_username içine ek kontrol ----
 USERS_FILE = "users.json"
 
@@ -362,7 +342,7 @@ async def betco_get_last_login_ip(client_id: int):
         pass
     return None
 
-# --- IP çakışması kontrol fonksiyonu (yeni endpoint + terminal log) ---
+# --- IP çakışması kontrol fonksiyonu ---
 async def check_ip_conflict(ip: str):
     url = "https://backofficewebadmin.betcostatic.com/api/tr/Client/GetClientsByIPAddress"
     payload = {
@@ -377,16 +357,13 @@ async def check_ip_conflict(ip: str):
         count = result.get("Data", {}).get("Count", 0)
         objects = result.get("Data", {}).get("Objects", [])
 
-        # --- Terminal log ---
         print(f"\n[IP KONTROL] {ip} adresi {count} kullanıcı tarafından kullanılıyor.")
         for obj in objects:
             cid = obj.get("ClientId")
             uname = obj.get("Login") or obj.get("Username")
             print(f"   → KullanıcıID: {cid}, Username: {uname}")
 
-        # ✅ Eğer count 1'den fazla ise IP çakışması
         ip_conflict = count > 1
-
         return ip_conflict, objects
     except Exception as e:
         print(f"[HATA][check_ip_conflict] {e}")
@@ -395,7 +372,6 @@ async def check_ip_conflict(ip: str):
 async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_user_id = update.effective_user.id
     
-    # ✅ Kullanıcı daha önce bonus almış mı kontrol et
     if has_taken_bonus(tg_user_id):
         await update.message.reply_text("⚠️ Bu Telegram hesabı üzerinden daha önce bonus alındı!")
         return
@@ -408,7 +384,7 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_user(tg_user_id)
     await update.message.reply_text("🔍 Kullanıcı adı sorgulanıyor, lütfen bekleyin...")
 
-    # --- 1) Betco'da kullanıcı ara (varsa) ---
+    # --- 1) Betco'da kullanıcı ara ---
     api_result = None
     try:
         api_result = await betco_find_user(username)
@@ -426,7 +402,7 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             detail = {}
 
-     # --- 2) Veritabanı sorgusu ---
+    # --- 2) Veritabanı sorgusu ---
     FirstName = (detail.get("FirstName") or user.get("FirstName") or "") or ""
     MiddleName = (detail.get("MiddleName") or user.get("MiddleName") or "") or ""
     LastName = (detail.get("LastName") or user.get("LastName") or "") or ""
@@ -434,7 +410,7 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
     BirthDate = (detail.get("BirthDate") or user.get("BirthDate") or "") or ""
 
     try:
-        # Database bağlantısını garanti et
+        # ✅ Database bağlantısını garanti et
         db_conn = ensure_db_connection()
         if db_conn is None:
             await update.message.reply_text("❌ Veritabanı bağlantı hatası, lütfen daha sonra tekrar deneyin.")
@@ -458,10 +434,8 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             birthdate_obj = datetime.fromisoformat(BirthDate.split("T")[0])
             birth_year = birthdate_obj.year
-            # --- VERİTABANINA UYUMLU FORMAT ---
-            # DOGUMTARIHI = '9.5.1973' formatında olduğundan LIKE kullanıyoruz
             clauses.append("DOGUMTARIHI LIKE %s")
-            params.append(f"%{birth_year}")  # örn: '%1973'
+            params.append(f"%{birth_year}")
         except Exception:
             await update.message.reply_text("❌ Doğum tarihi formatı okunamadı.")
             return
@@ -486,21 +460,21 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cursor.execute(sql, tuple(params))
             rows = cursor.fetchall()
         cursor.close()
+        
     except mariadb.Error as e:
         print(f"❌ Database hatası: {e}")
         # Bağlantıyı yeniden dene
-        db_conn = ensure_db_connection()
+        ensure_db_connection()
         await update.message.reply_text("❌ Veritabanı hatası, lütfen tekrar deneyin.")
         return
     except Exception as e:
         await update.message.reply_text(f"❌ Veritabanı sorgusunda hata: {e}")
         return
 
-    # --- ADD THIS BLOCK ---
     if not rows:
         await update.message.reply_text("❌ TC veya diğer bilgiler doğrulanmadı. \n \nEğer yanlış kullanıcı adı yazdıysanız tekrar deneyin. \n \n Eğer bilgileriniz size ait ise lütfen destek ile iletişime geçin.")
         return
-    # --- END OF ADDED BLOCK ---
+
     # --- 3) DB eşleşmesi varsa --- 
     if rows:
         await update.message.reply_text("✅ TC doğrulandı, diğer filtrelere geçiliyor...")
@@ -535,18 +509,13 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await update.message.reply_text("❌ Kullanıcı detayları alınamadı.")
             return
-# --- Kayıt tarihi filtresi ---
+
+        # --- Kayıt tarihi filtresi ---
         created_date_str = detail.get("CreatedLocalDate") or user.get("CreatedLocalDate")
         if created_date_str:
             try:
-                # Gelen string'i datetime objesine çevir
                 created_date = datetime.fromisoformat(created_date_str.split("T")[0])
-                # Karşılaştırma için cutoff
                 cutoff = datetime(2025, 9, 15)
-
-                # Görsel olarak dd.mm.yyyy formatına çevir
-                created_date_str_fmt = created_date.strftime("%d.%m.%Y")
-
                 if created_date < cutoff:
                     await update.message.reply_text(
                         "❌ 15.09.2025 tarihinden önce kayıt olduğunuz için bonus hakkınız bulunmamaktadır."
@@ -554,6 +523,7 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
             except Exception as e:
                 print(f"CreatedLocalDate parse hatası: {e}, value={created_date_str}")
+        
         # Daha önce casino oynamış mı?
         last_casino_bet = detail.get("LastCasinoBetLocalDate") or detail.get("LastCasinoBetTime")
         if last_casino_bet:
@@ -561,6 +531,7 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⚠️ Daha önceden casino oynamış olduğunuz için bonus hakkınız bulunmamaktadır."
             )
             return
+        
         # Daha önce yatırım yapmış mı?
         first_deposit = detail.get("FirstDepositLocalDate") or detail.get("FirstDepositTime")
         if first_deposit:
@@ -569,7 +540,6 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        
         # Bonus geçmişi kontrolü
         try:
             bonuses_payload = {
@@ -614,39 +584,18 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user.get("HasReceivedBonus"):
             await update.message.reply_text("⚠️ Daha önce bonus almışsınız. Tekrar bonus alamazsınız.")
             return
-        
-        # Kayıt tarihi kontrolü
-        created_date_str = detail.get("CreatedLocalDate") or user.get("CreatedLocalDate")
-        if created_date_str:
-            try:
-                # Gelen string'i datetime objesine çevir
-                created_date = datetime.fromisoformat(created_date_str.split("T")[0])
-                # Karşılaştırma için cutoff
-                cutoff = datetime(2025, 9, 15)
 
-                # Görsel olarak dd.mm.yyyy formatına çevir
-                created_date_str_fmt = created_date.strftime("%d.%m.%Y")
-
-                if created_date < cutoff:
+        # ---- IP çakışması kontrolü ----
+        if client_id:
+            last_ip = await betco_get_last_login_ip(client_id)
+            if last_ip:
+                ip_conflict, users_with_same_ip = await check_ip_conflict(last_ip)
+                if ip_conflict:
                     await update.message.reply_text(
-                        f"❌ 15.09.2025 tarihinden önce kayıt olduğunuz için bonus hakkınız bulunmamaktadır."
+                        f"❌ IP çakışması tespit edildi! Bu IP {len(users_with_same_ip)} kullanıcı tarafından kullanılıyor.\n"
+                        "⚠️ Bu nedenle bonus alamazsınız."
                     )
                     return
-            except Exception as e:
-                print(f"CreatedLocalDate parse hatası: {e}, value={created_date_str}")
-
-# ---- handle_username içinde IP çakışması kontrolü ----
-    if client_id:
-        last_ip = await betco_get_last_login_ip(client_id)
-        if last_ip:
-            ip_conflict, users_with_same_ip = await check_ip_conflict(last_ip)
-            if ip_conflict:
-                await update.message.reply_text(
-                    f"❌ IP çakışması tespit edildi! Bu IP {len(users_with_same_ip)} kullanıcı tarafından kullanılıyor.\n"
-                    "⚠️ Bu nedenle bonus alamazsınız."
-                )
-                return
-                
 
         # Bonus seçenekleri
         keyboard = [
@@ -661,37 +610,19 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # --- 4) DB eşleşmesi yok ama API'de kullanıcı varsa ---
     if api_result and api_result.get("ok") and api_result.get("user"):
-        user = api_result.get("user", {}) or {}
-        client_id = user.get("Id")
-        detail = {}
-        if client_id:
-            try:
-                detail_resp = await betco_get_user_by_id(client_id)
-                if detail_resp and not detail_resp.get("HasError"):
-                    detail = detail_resp.get("Data", {}) or {}
-            except Exception:
-                detail = {}
-
-        d = detail if detail else user
-        keyboard = [
-            [InlineKeyboardButton("Betco kullanıcı adınızı tekrar yazın", callback_data="retry")],
-        ]
-
-        await update.message.reply_text( "❌ TC'niz doğrulanamadı!\n \nEğer yanlış kullanıcı adı yazdıysanız lütfen tekrar deneyin.\n\nEğer bilgileriniz size ait ise lütfen destek ile iletişime geçin."
-        )
+        await update.message.reply_text("❌ TC'niz doğrulanamadı!\n \nEğer yanlış kullanıcı adı yazdıysanız lütfen tekrar deneyin.\n\nEğer bilgileriniz size ait ise lütfen destek ile iletişime geçin.")
         return
 
-# Hiçbir yerde bulunamadı
     await update.message.reply_text("❌ Kullanıcı bulunamadı veya yanıt boş.")
+
 # ================== Callback ile Bonus İşlemi ==================
 async def bonus_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
     data = query.data
-    user_id = query.from_user.id   # ✅ Telegram kullanıcı ID
+    user_id = query.from_user.id
 
-    # Daha önce bu Telegram hesabından bonus alınmış mı?
     if has_taken_bonus(user_id):
         await query.answer("⚠️ Bu Telegram hesabı üzerinden daha önce bonus alındı!", show_alert=True)
         return
@@ -700,7 +631,6 @@ async def bonus_button_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         _, bonus_type, client_id_str = data.split("_")
         client_id = int(client_id_str)
 
-        # ✅ İlk defa alıyorsa API'ye istek atıyoruz
         resp = await give_bonus(client_id, bonus_type)
 
         if resp.get("HasError"):
@@ -713,7 +643,6 @@ async def bonus_button_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             else:
                 await query.edit_message_text("✅ Bonus hesabınıza başarıyla yüklendi!")
 
-            # ✅ Bonus verildi → artık bu Telegram hesabı kilitlendi
             mark_bonus_given(user_id)
 
 # ================== /duyuru Komutu (Resimli) ==================
@@ -723,15 +652,13 @@ async def broadcast_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Bu komutu kullanmaya yetkiniz yok!")
         return
 
-    # Komut bir fotoğraf mesajına cevap olarak kullanılmalı
     if not update.message.reply_to_message or not update.message.reply_to_message.photo:
         await update.message.reply_text("❌ Kullanım: /duyuru komutunu bir fotoğraf mesajına cevap olarak gönderiniz.")
         return
 
-    photo = update.message.reply_to_message.photo[-1].file_id  # en yüksek çözünürlüklü fotoğraf
+    photo = update.message.reply_to_message.photo[-1].file_id
     caption = update.message.reply_to_message.caption or "📢 Yeni duyuru!"
 
-    # users.json içinden kullanıcıları oku
     try:
         with open(USERS_FILE, "r", encoding="utf-8") as f:
             users = json.load(f)
@@ -759,13 +686,65 @@ async def broadcast_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⚠️ Başarısız: {failed_count}"
     )
 
-# ================== Database Health Check Task ==================
+# ================== Database Health Check ==================
 async def database_health_check():
-    """Periyodik olarak database bağlantısını kontrol et ve gerekiyorsa yeniden bağlan"""
+    """Periyodik olarak database bağlantısını kontrol et"""
     while True:
         try:
             ensure_db_connection()
-            await asyncio.sleep(3600)  # 1 saatte bir kontrol et
+            await asyncio.sleep(1800)  # 30 dakikada bir kontrol et
         except Exception as e:
             print(f"❌ Database health check hatası: {e}")
-           
+        await asyncio.sleep(30)
+
+# ================== Keep Alive ==================
+async def keep_alive():
+    """Botun canlı olduğunu göster"""
+    while True:
+        try:
+            print(f"🤖 Bot çalışıyor - {datetime.now().strftime('%H:%M:%S')}")
+            await asyncio.sleep(300)  # 5 dakikada bir
+        except Exception as e:
+            print(f"Keep-alive hatası: {e}")
+        await asyncio.sleep(30)
+
+# ================== Hata Yönetimi ==================
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print(f"❌ Hata oluştu: {context.error}")
+
+# ================== Runner ==================
+if __name__ == "__main__":
+    # Health check task'ini başlat
+    import threading
+    
+    def start_health_check():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(database_health_check())
+    
+    health_thread = threading.Thread(target=start_health_check, daemon=True)
+    health_thread.start()
+    
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    app.add_handler(CallbackQueryHandler(bonus_button_handler, pattern="^bonus_"))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("settoken", set_token))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_username))
+    app.add_handler(CommandHandler("duyuru", broadcast_photo))
+    
+    app.add_error_handler(error_handler)
+    
+    print("🚀 Bot çalışmaya başladı...")
+    
+    try:
+        app.run_polling(
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True,
+            close_loop=False
+        )
+    except Exception as e:
+        print(f"❌ Bot durdu: {e}")
+        time.sleep(10)
+        os.execv(sys.executable, ['python'] + sys.argv)
