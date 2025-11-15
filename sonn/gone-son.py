@@ -43,7 +43,7 @@ def get_db_connection():
             password="root",
             database="101M2",
             autocommit=True,
-            reconnect=True  # ✅ Otomatik reconnect özelliği
+            reconnect=True
         )
         print("✅ Yeni database bağlantısı başarılı")
         return conn
@@ -59,16 +59,16 @@ def ensure_db_connection():
     
     for attempt in range(max_retries):
         try:
-            # Bağlantıyı test et
-            if conn is None or not conn.is_connected():
-                print("🔁 Database bağlantısı kopmuş, yeniden bağlanılıyor...")
+            # Bağlantı None ise veya kapalıysa yeniden bağlan
+            if conn is None:
+                print("🔁 Database bağlantısı yok, yeniden bağlanılıyor...")
                 conn = get_db_connection()
                 if conn:
                     return conn
                 else:
-                    raise mariadb.Error("Bağlantı kurulamadı")
+                    continue
             
-            # Basit bir test sorgusu çalıştır
+            # Basit bir test sorgusu çalıştırarak bağlantıyı test et
             cursor = conn.cursor()
             cursor.execute("SELECT 1")
             cursor.close()
@@ -82,6 +82,9 @@ def ensure_db_connection():
             else:
                 print("❌ Tüm database bağlantı denemeleri başarısız")
                 return None
+        except Exception as e:
+            print(f"❌ Beklenmeyen database hatası: {e}")
+            conn = get_db_connection()
 
 # İlk bağlantıyı kur
 conn = get_db_connection()
@@ -697,34 +700,12 @@ async def database_health_check():
             print(f"❌ Database health check hatası: {e}")
         await asyncio.sleep(30)
 
-# ================== Keep Alive ==================
-async def keep_alive():
-    """Botun canlı olduğunu göster"""
-    while True:
-        try:
-            print(f"🤖 Bot çalışıyor - {datetime.now().strftime('%H:%M:%S')}")
-            await asyncio.sleep(300)  # 5 dakikada bir
-        except Exception as e:
-            print(f"Keep-alive hatası: {e}")
-        await asyncio.sleep(30)
-
 # ================== Hata Yönetimi ==================
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(f"❌ Hata oluştu: {context.error}")
 
 # ================== Runner ==================
 if __name__ == "__main__":
-    # Health check task'ini başlat
-    import threading
-    
-    def start_health_check():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(database_health_check())
-    
-    health_thread = threading.Thread(target=start_health_check, daemon=True)
-    health_thread.start()
-    
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CallbackQueryHandler(bonus_button_handler, pattern="^bonus_"))
@@ -739,6 +720,16 @@ if __name__ == "__main__":
     print("🚀 Bot çalışmaya başladı...")
     
     try:
+        # Health check'i ayrı thread'de başlat
+        import threading
+        def start_health_check():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(database_health_check())
+        
+        health_thread = threading.Thread(target=start_health_check, daemon=True)
+        health_thread.start()
+        
         app.run_polling(
             allowed_updates=Update.ALL_TYPES,
             drop_pending_updates=True,
