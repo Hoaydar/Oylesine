@@ -1,14 +1,11 @@
 from unittest import result
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-# Buraya JobQueue eklendi!
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters, JobQueue 
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
 from telegram.error import BadRequest
 import aiohttp
 import asyncio
 from datetime import datetime, timedelta
 import json
-import mysql.connector # İthalat listesinde kalabilir
-from datetime import datetime, timedelta
 import mariadb
 
 # ================== Telegram ==================
@@ -33,28 +30,74 @@ ADMIN_IDS = [5695472914, 5947341902, 805254965, 1782604827]
 # Token değişim zamanı (başlangıçta None)
 last_token_change = None
 
-# ================== MariaDB/MySQL Yapılandırması ==================
+# ================== Database Config + Reconnect Logic ==================
 DB_CONFIG = {
     "host": "127.0.0.1",
     "port": 3306,
     "user": "root",
     "password": "root",
-    "database": "101M2"
+    "database": "101M2",
+    # optionally: "autocommit": True  # mariadb driver doesn't accept this in connect(), we'll set after connect
 }
 
-def get_db_connection():
-    """Yeni bir MariaDB/MySQL bağlantısı kurar."""
+conn = None
+
+async def ensure_db_connection():
+    """Ensure global `conn` is connected. If not, try to reconnect.
+
+    This function is safe to call before any DB operation. It will attempt
+    to reconnect synchronously (since mariadb.connect is sync) but returns
+    immediately so callers can await it if they like.
+    """
+    global conn
+    if conn:
+        try:
+            # try a lightweight check
+            conn.ping()
+            return
+        except Exception:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            conn = None
+
+    # attempt to connect
     try:
-        conn = mariadb.connect(**DB_CONFIG)
-        # print("✅ Database bağlantısı başarılı")
-        return conn
+        conn = mariadb.connect(
+            host=DB_CONFIG["host"],
+            port=DB_CONFIG["port"],
+            user=DB_CONFIG["user"],
+            password=DB_CONFIG["password"],
+            database=DB_CONFIG["database"],
+            autocommit=True
+        )
+        print("✅ Database bağlantısı başarılı (yeni bağlantı)")
     except mariadb.Error as err:
         print(f"❌ Database bağlantı hatası: {err}")
-        return None
+        conn = None
+
+# Try to make an initial connection (non-blocking world: call ensure_db_connection in event loop later)
+# We'll call it here synchronously so logs appear at startup
+try:
+    # create immediate connection
+    conn = mariadb.connect(
+        host=DB_CONFIG["host"],
+        port=DB_CONFIG["port"],
+        user=DB_CONFIG["user"],
+        password=DB_CONFIG["password"],
+        database=DB_CONFIG["database"],
+        autocommit=True
+    )
+    print("✅ Database bağlantısı başarılı")
+except mariadb.Error as err:
+    print(f"❌ Database bağlantı hatası: {err}")
+    conn = None
 
 # ---- Bonus Alan Kullanıcılar (telegram kontrol)----
 BONUS_USERS_FILE = "bonus_users.json"
 print("🚀 Kod başladı")
+
 def has_taken_bonus(user_id: int) -> bool:
     """Kullanıcı daha önce bonus almış mı kontrol et"""
     try:
@@ -78,7 +121,7 @@ def mark_bonus_given(user_id: int):
             json.dump(data, f, ensure_ascii=False, indent=2)
 
 # ================== /settoken Komutu ==================
-SPECIAL_GROUP_ID = -4876211377 
+SPECIAL_GROUP_ID = -4876211377
 # ================== /settoken Komutu ==================
 async def set_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global BETCO_TOKEN, last_token_change
@@ -248,7 +291,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if await check_membership(user_id, context):
             await query.edit_message_caption(
                 caption=f"🎉 Tebrikler {query.from_user.first_name}! Kanalımıza başarıyla katıldınız.\n"
-                        "Artık bonusunuzu alabilmek için bana Betco kullanıcı adınızı yazınız."
+                      "Artık bonusunuzu alabilmek için bana Betco kullanıcı adınızı yazınız."
             )
         else:
             await query.answer("❌ Hâlâ kanala katılmamışsınız!", show_alert=True)
@@ -304,7 +347,6 @@ def save_user(user_id: int):
         users.append(user_id)
         with open(USERS_FILE, "w", encoding="utf-8") as f:
             json.dump(users, f, ensure_ascii=False, indent=2)
-
 
 
 # ---- Betco: GetClientById ----
@@ -374,12 +416,12 @@ async def check_ip_conflict(ip: str):
 
 async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_user_id = update.effective_user.id
-    
+
     # ✅ Kullanıcı daha önce bonus almış mı kontrol et
     if has_taken_bonus(tg_user_id):
         await update.message.reply_text("⚠️ Bu Telegram hesabı üzerinden daha önce bonus alındı!")
         return
-    
+
     username = (update.message.text or "").strip()
     if not username:
         return
@@ -413,10 +455,10 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
     DocNumber = (detail.get("DocNumber") or user.get("DocNumber") or "") or ""
     BirthDate = (detail.get("BirthDate") or user.get("BirthDate") or "") or ""
 
-    # Hata çözümü için bağlantıyı try-finally veya with bloğu içinde kuruyoruz
-    conn = get_db_connection()
-    if not conn:
-        await update.message.reply_text("❌ Veritabanı bağlantısı kurulamadı. Lütfen yöneticinize başvurun.")
+    # Ensure DB connection before any DB work
+    await ensure_db_connection()
+    if conn is None:
+        await update.message.reply_text("❌ Veritabanına bağlanılamıyor. Lütfen daha sonra tekrar deneyin.")
         return
 
     try:
@@ -463,16 +505,22 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if clauses:
             sql = "SELECT * FROM 101m WHERE " + " AND ".join(clauses)
             print("DEBUG SQL:", sql, "PARAMS:", params)
-            cursor.execute(sql, tuple(params))
+            try:
+                cursor.execute(sql, tuple(params))
+            except Exception as e:
+                # Eğer bağlantı kopmuşsa yeniden bağlanmayı dene ve sorguyu bir kez daha çalıştır
+                print(f"DB query error, trying reconnect: {e}")
+                await ensure_db_connection()
+                if conn is None:
+                    raise
+                cursor = conn.cursor()
+                cursor.execute(sql, tuple(params))
+
             rows = cursor.fetchall()
         cursor.close()
-    except mariadb.Error as e: # Sadece mariadb hatalarını yakala
+    except Exception as e:
         await update.message.reply_text(f"❌ Veritabanı sorgusunda hata: {e}")
         return
-    finally:
-        # Bağlantıyı mutlaka kapat
-        if conn:
-            conn.close()
 
     # --- ADD THIS BLOCK ---
     if not rows:
@@ -614,17 +662,16 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 print(f"CreatedLocalDate parse hatası: {e}, value={created_date_str}")
 
 # ---- handle_username içinde IP çakışması kontrolü ----
-        if client_id:
-            last_ip = await betco_get_last_login_ip(client_id)
-            if last_ip:
-                ip_conflict, users_with_same_ip = await check_ip_conflict(last_ip)
-                if ip_conflict:
-                    await update.message.reply_text(
-                        f"❌ IP çakışması tespit edildi! Bu IP {len(users_with_same_ip)} kullanıcı tarafından kullanılıyor.\n"
-                        "⚠️ Bu nedenle bonus alamazsınız."
-                    )
-                    return
-                    
+    if client_id:
+        last_ip = await betco_get_last_login_ip(client_id)
+        if last_ip:
+            ip_conflict, users_with_same_ip = await check_ip_conflict(last_ip)
+            if ip_conflict:
+                await update.message.reply_text(
+                    f"❌ IP çakışması tespit edildi! Bu IP {len(users_with_same_ip)} kullanıcı tarafından kullanılıyor.\n"
+                    "⚠️ Bu nedenle bonus alamazsınız."
+                )
+                return
 
         # Bonus seçenekleri
         keyboard = [
@@ -738,17 +785,18 @@ async def broadcast_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 # ================== Runner ==================
 if __name__ == "__main__":
-    # JobQueue'u aktif etmek için JobQueue() örneği kullanıldı
-    app = ApplicationBuilder().token(TOKEN).job_queue(JobQueue()).build()
-
-    # Token hatırlatıcısını çalıştır
-    app.job_queue.run_once(token_reminder_task, 1, name='token_reminder_start')
+    app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CallbackQueryHandler(bonus_button_handler, pattern="^bonus_"))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("settoken", set_token))
+    app.add_handler(CommandHandler("settoken", set_token))  # ✅ burayı ekle
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_username))
     app.add_handler(CommandHandler("duyuru", broadcast_photo))
+
+    # Start background token reminder task
+    loop = asyncio.get_event_loop()
+    loop.create_task(token_reminder_task(app))
+
     print("Bot çalışmaya başladı...")
     app.run_polling()
