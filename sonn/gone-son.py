@@ -1,17 +1,18 @@
 from unittest import result
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
+# Buraya JobQueue eklendi!
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters, JobQueue 
 from telegram.error import BadRequest
 import aiohttp
 import asyncio
 from datetime import datetime, timedelta
 import json
-import mysql.connector
+import mysql.connector # İthalat listesinde kalabilir
 from datetime import datetime, timedelta
 import mariadb
 
 # ================== Telegram ==================
-TOKEN = "8275693889:AAGxq5vm1-mKIAXiHI6Q-r6O3xUEbi53AAk"  # kendi tokenini koy
+TOKEN = "8275693889:AAGxq5vm1-mKIAXiHI6Q-r6O3xUEbi53AAc"  # kendi tokenini koy
 CHANNEL_USERNAME = "@goneresminew"
 
 # ================== Betco API ==================
@@ -22,7 +23,7 @@ BETCO_ADD_CLIENT_BONUS_URL = "https://backofficewebadmin.betcostatic.com/api/tr/
 # Bonus tipleri -> PartnerBonusId ve Amount
 BONUS_MAP = {
     "freespin": {"PartnerBonusId": 604382, "Amount": "500"},  # 500 FreeSpin
-    "freebet": {"PartnerBonusId": 604383, "Amount": "50"}      # 50 FreeBet (doğru ID'yi sen koy)
+    "freebet": {"PartnerBonusId": 604383, "Amount": "50"}     # 50 FreeBet (doğru ID'yi sen koy)
 }
 
 # ================== Token Yönetimi ==================
@@ -32,43 +33,43 @@ ADMIN_IDS = [5695472914, 5947341902, 805254965, 1782604827]
 # Token değişim zamanı (başlangıçta None)
 last_token_change = None
 
-# ❌ ESKİ GLOBAL VERİTABANI BAĞLANTISI KALDIRILDI. ARTIK BAĞLANTI İHTİYAÇ DUYULDUĞUNDA AÇILIP KAPATILACAK.
+# ================== MariaDB/MySQL Yapılandırması ==================
+DB_CONFIG = {
+    "host": "127.0.0.1",
+    "port": 3306,
+    "user": "root",
+    "password": "root",
+    "database": "101M2"
+}
+
+def get_db_connection():
+    """Yeni bir MariaDB/MySQL bağlantısı kurar."""
+    try:
+        conn = mariadb.connect(**DB_CONFIG)
+        # print("✅ Database bağlantısı başarılı")
+        return conn
+    except mariadb.Error as err:
+        print(f"❌ Database bağlantı hatası: {err}")
+        return None
 
 # ---- Bonus Alan Kullanıcılar (telegram kontrol)----
 BONUS_USERS_FILE = "bonus_users.json"
 print("🚀 Kod başladı")
-
-# Veritabanı bağlantı parametrelerini bir fonksiyona taşıyalım
-def get_db_connection():
-    """Yeni bir MariaDB bağlantısı oluşturur."""
-    return mariadb.connect(
-        host="127.0.0.1",
-        port=3306,
-        user="root",
-        password="root",
-        database="101M2"
-    )
-
 def has_taken_bonus(user_id: int) -> bool:
     """Kullanıcı daha önce bonus almış mı kontrol et"""
     try:
         with open(BONUS_USERS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-        # JSON dosyasında int olarak kayıtlıysa kontrol et
-        return user_id in data or str(user_id) in data
+        return user_id in data
     except FileNotFoundError:
         return False
-    except json.JSONDecodeError:
-        # Boş veya bozuk dosya durumunda
-        return False
-
 
 def mark_bonus_given(user_id: int):
     """Kullanıcıya bonus verildiyse kaydet"""
     try:
         with open(BONUS_USERS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+    except FileNotFoundError:
         data = []
 
     if user_id not in data:
@@ -208,12 +209,6 @@ async def betco_find_user(username: str):
     ]
     if partial:
         return {"ok": True, "user": partial[0], "raw": users}
-    
-    # Hata durumunda boş döndür
-    if data1 and data1.get("HasError"):
-        return {"ok": False, "error": data1.get("AlertMessage")}
-    
-    return {"ok": False, "error": "Kullanıcı bulunamadı"}
 
 # ================== Telegram Bot Mantığı ==================
 async def check_membership(user_id, context):
@@ -228,7 +223,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_membership(user_id, context):
         await update.message.reply_text(
             f"🎉 Tebrikler {update.effective_user.first_name}! Kanalımıza başarıyla katıldınız.\n"
-            "Artık bonusunuzu alabilmek için bana **Betco kullanıcı adınızı** yazınız."
+            "Artık bonusunuzu alabilmek için bana Betco kullanıcı adınızı yazınız."
         )
     else:
         await send_invite_message(update)
@@ -243,14 +238,7 @@ async def send_invite_message(update: Update):
         [InlineKeyboardButton("🎯 Kanala katılmak için hemen tıkla", url="https://t.me/goneresminew")],
         [InlineKeyboardButton("🎯 Kanala katıldım", callback_data="joined")]
     ]
-    # Yanıt olarak fotoğraf göndermek yerine, botun ilk mesajı olarak göndermek daha uygun olabilir.
-    if update.message and update.message.chat.type == "private":
-        try:
-            await update.message.reply_photo(photo=photo_url, caption=caption_text, reply_markup=InlineKeyboardMarkup(keyboard))
-        except Exception:
-             await update.message.reply_text(caption_text, reply_markup=InlineKeyboardMarkup(keyboard))
-    else:
-        await update.message.reply_text("Lütfen bu işlemi DM üzerinden yapın.")
+    await update.message.reply_photo(photo=photo_url, caption=caption_text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -260,7 +248,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if await check_membership(user_id, context):
             await query.edit_message_caption(
                 caption=f"🎉 Tebrikler {query.from_user.first_name}! Kanalımıza başarıyla katıldınız.\n"
-                        "Artık bonusunuzu alabilmek için bana **Betco kullanıcı adınızı** yazınız."
+                        "Artık bonusunuzu alabilmek için bana Betco kullanıcı adınızı yazınız."
             )
         else:
             await query.answer("❌ Hâlâ kanala katılmamışsınız!", show_alert=True)
@@ -287,9 +275,19 @@ async def give_bonus(client_id: int, bonus_type: str):
 
 # ================== FreeBet Yükleme Fonksiyonu ==================
 async def give_freebet(client_id: int):
-    # Bu fonksiyon artık genel give_bonus tarafından ele alındığı için teknik olarak gereksiz,
-    # ancak mevcut yapıyı korumak için bırakılabilir.
-    return await give_bonus(client_id, "freebet")
+    payload = {
+        "ClientId": client_id,
+        "MessageChannel": None,
+        "Amount": "50",  # 50 FreeBet
+        "MessageSubject": None,
+        "MessageContent": None,
+        "Count": None,
+        "PartnerBonusId": 604383  # FreeBet bonus ID'si
+    }
+
+    print(f"[FREEBET REQUEST] client_id={client_id}, payload={payload}")
+    resp = await betco_post(BETCO_ADD_CLIENT_BONUS_URL, payload)
+    return resp
 
 # ---- handle_username içine ek kontrol ----
 USERS_FILE = "users.json"
@@ -299,13 +297,14 @@ def save_user(user_id: int):
     try:
         with open(USERS_FILE, "r", encoding="utf-8") as f:
             users = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+    except FileNotFoundError:
         users = []
 
     if user_id not in users:
         users.append(user_id)
         with open(USERS_FILE, "w", encoding="utf-8") as f:
             json.dump(users, f, ensure_ascii=False, indent=2)
+
 
 
 # ---- Betco: GetClientById ----
@@ -318,15 +317,12 @@ async def betco_get_user_by_id(client_id: int):
     }
     timeout = aiohttp.ClientTimeout(total=20)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        try:
-            async with session.get(url, headers=headers) as resp:
-                text = await resp.text()
-                try:
-                    return json.loads(text)
-                except Exception:
-                    return {"HasError": True, "AlertMessage": "JSON parse edilemedi", "_raw": text}
-        except Exception as e:
-            return {"HasError": True, "AlertMessage": f"Request exception: {e}"}
+        async with session.get(url, headers=headers) as resp:
+            text = await resp.text()
+            try:
+                return json.loads(text)
+            except Exception:
+                return {"HasError": True, "AlertMessage": "JSON parse edilemedi", "_raw": text}
 
 async def betco_get_last_login_ip(client_id: int):
     url = "https://backofficewebadmin.betcostatic.com/api/tr/Client/GetLogins"
@@ -398,14 +394,6 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
         api_result = await betco_find_user(username)
     except Exception:
         api_result = None
-    
-    # API Hata kontrolü
-    if api_result and not api_result.get("ok") and api_result.get("error"):
-        if "401 Unauthorized" in api_result.get("error"):
-             await update.message.reply_text("❌ Betco token geçersiz. Lütfen `/settoken <yeni_token>` komutu ile güncelleyiniz.")
-        else:
-            await update.message.reply_text(f"❌ Betco sorgusunda bir hata oluştu: {api_result.get('error')}")
-        return
 
     user = (api_result.get("user") if api_result else {}) or {}
     client_id = user.get("Id")
@@ -425,38 +413,38 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
     DocNumber = (detail.get("DocNumber") or user.get("DocNumber") or "") or ""
     BirthDate = (detail.get("BirthDate") or user.get("BirthDate") or "") or ""
 
-    # TC numarası → zorunlu
-    if not DocNumber:
-        await update.message.reply_text("❌ Kullanıcının TC bilgisi bulunamadı, doğrulama yapılamıyor.")
-        return
-    
-    # Doğum tarihi → zorunlu
-    birth_year = None
-    if not BirthDate:
-        await update.message.reply_text("❌ Kullanıcının doğum tarihi bulunamadı, doğrulama yapılamıyor.")
-        return
-    try:
-        birthdate_obj = datetime.fromisoformat(BirthDate.split("T")[0])
-        birth_year = birthdate_obj.year
-    except Exception:
-        await update.message.reply_text("❌ Doğum tarihi formatı okunamadı.")
+    # Hata çözümü için bağlantıyı try-finally veya with bloğu içinde kuruyoruz
+    conn = get_db_connection()
+    if not conn:
+        await update.message.reply_text("❌ Veritabanı bağlantısı kurulamadı. Lütfen yöneticinize başvurun.")
         return
 
-    rows = []
-    conn = None # Bağlantıyı try bloğu dışında tanımla
     try:
-        # 🟢 YENİ: Bağlantıyı sorgu anında kuruyoruz
-        conn = get_db_connection()
         cursor = conn.cursor()
         clauses = []
         params = []
-        
+
+        # TC numarası → zorunlu
+        if not DocNumber:
+            await update.message.reply_text("❌ Kullanıcının TC bilgisi bulunamadı, doğrulama yapılamıyor.")
+            return
         clauses.append("TC = %s")
         params.append(DocNumber)
 
-        # DOGUMTARIHI = '9.5.1973' formatında olduğundan LIKE kullanıyoruz
-        clauses.append("DOGUMTARIHI LIKE %s")
-        params.append(f"%{birth_year}") 
+        birth_year = None
+        if not BirthDate:
+            await update.message.reply_text("❌ Kullanıcının doğum tarihi bulunamadı, doğrulama yapılamıyor.")
+            return
+        try:
+            birthdate_obj = datetime.fromisoformat(BirthDate.split("T")[0])
+            birth_year = birthdate_obj.year
+            # --- VERİTABANINA UYUMLU FORMAT ---
+            # DOGUMTARIHI = '9.5.1973' formatında olduğundan LIKE kullanıyoruz
+            clauses.append("DOGUMTARIHI LIKE %s")
+            params.append(f"%{birth_year}")  # örn: '%1973'
+        except Exception:
+            await update.message.reply_text("❌ Doğum tarihi formatı okunamadı.")
+            return
 
         # ADI kolonu (FirstName + MiddleName)
         full_name = FirstName
@@ -471,42 +459,38 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
             clauses.append("UPPER(SOYADI) = %s")
             params.append(LastName.upper())
 
+        rows = []
         if clauses:
             sql = "SELECT * FROM 101m WHERE " + " AND ".join(clauses)
             print("DEBUG SQL:", sql, "PARAMS:", params)
             cursor.execute(sql, tuple(params))
             rows = cursor.fetchall()
-        
-        # 🔴 ÖNEMLİ: İşlem bitince cursor'ı ve bağlantıyı kapat
         cursor.close()
-        conn.close()
+    except mariadb.Error as e: # Sadece mariadb hatalarını yakala
+        await update.message.reply_text(f"❌ Veritabanı sorgusunda hata: {e}")
+        return
+    finally:
+        # Bağlantıyı mutlaka kapat
+        if conn:
+            conn.close()
 
-    except mariadb.Error as e:
-        # Bağlantı açma veya sorgu hatası
-        if conn:
-            try: conn.close()
-            except: pass
-        await update.message.reply_text(f"❌ Veritabanı bağlantı/sorgu hatası: {e}")
-        return
-    except Exception as e:
-        # Genel hata
-        if conn:
-            try: conn.close()
-            except: pass
-        await update.message.reply_text(f"❌ Veritabanı sorgusunda beklenmedik bir hata: {e}")
-        return
-    
-    # --- DB eşleşmesi yoksa ---
+    # --- ADD THIS BLOCK ---
     if not rows:
         await update.message.reply_text("❌ TC veya diğer bilgiler doğrulanmadı. \n \nEğer yanlış kullanıcı adı yazdıysanız tekrar deneyin. \n \n Eğer bilgileriniz size ait ise lütfen destek ile iletişime geçin.")
         return
-    
-    # --- 3) DB eşleşmesi varsa (API'den alınan bilgileri tekrar kontrol et) --- 
+    # --- END OF ADDED BLOCK ---
+    # --- 3) DB eşleşmesi varsa --- 
     if rows:
         await update.message.reply_text("✅ TC doğrulandı, diğer filtrelere geçiliyor...")
 
-        # API'de kullanıcı var mı kontrolü (Tekrar yapılmasına gerek yok, başta yapıldı ama garantileyelim)
         if not (api_result and api_result.get("ok")):
+            try:
+                api_result = await betco_find_user(username)
+            except Exception as e:
+                await update.message.reply_text(f"❌ Betco sorgusunda hata oluştu: {e}")
+                return
+
+        if not api_result or not api_result.get("ok"):
             await update.message.reply_text(
                 "⚠️ Veritabanında eşleşme bulundu fakat Betco sisteminde kullanıcı bulunamadı. "
                 "Lütfen destek ile iletişime geçin."
@@ -519,7 +503,6 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("⚠️ Kullanıcı ID bulunamadı, işlem yapılamıyor.")
             return
 
-        # Tekrar kullanıcı detaylarını çek
         detail = {}
         try:
             detail_resp = await betco_get_user_by_id(client_id)
@@ -530,8 +513,7 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await update.message.reply_text("❌ Kullanıcı detayları alınamadı.")
             return
-
-        # --- Kayıt tarihi filtresi ---
+# --- Kayıt tarihi filtresi ---
         created_date_str = detail.get("CreatedLocalDate") or user.get("CreatedLocalDate")
         if created_date_str:
             try:
@@ -545,14 +527,11 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if created_date < cutoff:
                     await update.message.reply_text(
-                        f"❌ {cutoff.strftime('%d.%m.%Y')} tarihinden önce kayıt olduğunuz için bonus hakkınız bulunmamaktadır."
+                        "❌ 15.09.2025 tarihinden önce kayıt olduğunuz için bonus hakkınız bulunmamaktadır."
                     )
                     return
             except Exception as e:
                 print(f"CreatedLocalDate parse hatası: {e}, value={created_date_str}")
-                await update.message.reply_text("❌ Kayıt tarihi formatı okunamadı.")
-                return
-
         # Daha önce casino oynamış mı?
         last_casino_bet = detail.get("LastCasinoBetLocalDate") or detail.get("LastCasinoBetTime")
         if last_casino_bet:
@@ -560,7 +539,6 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⚠️ Daha önceden casino oynamış olduğunuz için bonus hakkınız bulunmamaktadır."
             )
             return
-            
         # Daha önce yatırım yapmış mı?
         first_deposit = detail.get("FirstDepositLocalDate") or detail.get("FirstDepositTime")
         if first_deposit:
@@ -569,6 +547,7 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
+        
         # Bonus geçmişi kontrolü
         try:
             bonuses_payload = {
@@ -602,11 +581,7 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif isinstance(bonus_items, list):
                 items = bonus_items
             for b in items:
-                # Burada sadece iptal edilmemiş (CancellationNote yok) herhangi bir bonusu kontrol ediyoruz.
                 if b and b.get("CancellationNote") is None:
-                    # Alternatif bir kontrol, örneğin StatusId 10:Accepted, 11:Active
-                    # if b.get("StatusId") in [10, 11]: return True
-                    # Veya basitçe, bir kez bonus almış mı?
                     return True
             return False
 
@@ -618,46 +593,81 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("⚠️ Daha önce bonus almışsınız. Tekrar bonus alamazsınız.")
             return
         
-        # ---- handle_username içinde IP çakışması kontrolü ----
+        # Kayıt tarihi kontrolü
+        created_date_str = detail.get("CreatedLocalDate") or user.get("CreatedLocalDate")
+        if created_date_str:
+            try:
+                # Gelen string'i datetime objesine çevir
+                created_date = datetime.fromisoformat(created_date_str.split("T")[0])
+                # Karşılaştırma için cutoff
+                cutoff = datetime(2025, 9, 15)
+
+                # Görsel olarak dd.mm.yyyy formatına çevir
+                created_date_str_fmt = created_date.strftime("%d.%m.%Y")
+
+                if created_date < cutoff:
+                    await update.message.reply_text(
+                        f"❌ 15.09.2025 tarihinden önce kayıt olduğunuz için bonus hakkınız bulunmamaktadır."
+                    )
+                    return
+            except Exception as e:
+                print(f"CreatedLocalDate parse hatası: {e}, value={created_date_str}")
+
+# ---- handle_username içinde IP çakışması kontrolü ----
         if client_id:
             last_ip = await betco_get_last_login_ip(client_id)
             if last_ip:
                 ip_conflict, users_with_same_ip = await check_ip_conflict(last_ip)
                 if ip_conflict:
                     await update.message.reply_text(
-                        f"❌ IP çakışması tespit edildi! Bu IP **{len(users_with_same_ip)}** kullanıcı tarafından kullanılıyor.\n"
+                        f"❌ IP çakışması tespit edildi! Bu IP {len(users_with_same_ip)} kullanıcı tarafından kullanılıyor.\n"
                         "⚠️ Bu nedenle bonus alamazsınız."
                     )
                     return
-        
+                    
+
         # Bonus seçenekleri
         keyboard = [
             [InlineKeyboardButton("🎰 500 FreeSpin", callback_data=f"bonus_freespin_{client_id}")],
             [InlineKeyboardButton("⚽ 50 FreeBet", callback_data=f"bonus_freebet_{client_id}")]
         ]
         await update.message.reply_text(
-            "🎉 **Bonusunuzu seçiniz:**",
+            "🎉 Bonusunuzu seçiniz:",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return
 
     # --- 4) DB eşleşmesi yok ama API’de kullanıcı varsa ---
-    # Bu blok, DB kontrolünden (if not rows) sonra API'den kullanıcı bulunduysa çalışır.
     if api_result and api_result.get("ok") and api_result.get("user"):
+        user = api_result.get("user", {}) or {}
+        client_id = user.get("Id")
+        detail = {}
+        if client_id:
+            try:
+                detail_resp = await betco_get_user_by_id(client_id)
+                if detail_resp and not detail_resp.get("HasError"):
+                    detail = detail_resp.get("Data", {}) or {}
+            except Exception:
+                detail = {}
+
+        d = detail if detail else user
+        keyboard = [
+            [InlineKeyboardButton("Betco kullanıcı adınızı tekrar yazın", callback_data="retry")],
+        ]
+
         await update.message.reply_text( "❌ TC’niz doğrulanamadı!\n \nEğer yanlış kullanıcı adı yazdıysanız lütfen tekrar deneyin.\n\nEğer bilgileriniz size ait ise lütfen destek ile iletişime geçin."
         )
         return
 
-    # Hiçbir yerde bulunamadı
+# Hiçbir yerde bulunamadı
     await update.message.reply_text("❌ Kullanıcı bulunamadı veya yanıt boş.")
-    
 # ================== Callback ile Bonus İşlemi ==================
 async def bonus_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
     data = query.data
-    user_id = query.from_user.id  # ✅ Telegram kullanıcı ID
+    user_id = query.from_user.id   # ✅ Telegram kullanıcı ID
 
     # Daha önce bu Telegram hesabından bonus alınmış mı?
     if has_taken_bonus(user_id):
@@ -665,30 +675,21 @@ async def bonus_button_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     if data.startswith("bonus_"):
-        try:
-            _, bonus_type, client_id_str = data.split("_")
-            client_id = int(client_id_str)
-        except ValueError:
-            await query.edit_message_text("❌ Geçersiz bonus verisi.")
-            return
+        _, bonus_type, client_id_str = data.split("_")
+        client_id = int(client_id_str)
 
         # ✅ İlk defa alıyorsa API’ye istek atıyoruz
-        await query.edit_message_text(f"⏳ {bonus_type.upper()} yükleniyor, lütfen bekleyin...")
         resp = await give_bonus(client_id, bonus_type)
 
         if resp.get("HasError"):
-            # Önceki mesajı düzenleyerek hata mesajını göster
-            await query.edit_message_text(f"❌ **{bonus_type.upper()} yüklenemedi!**\n\nHata: {resp.get('AlertMessage')}")
+            await query.edit_message_text(f"❌ {bonus_type} yüklenemedi: {resp.get('AlertMessage')}")
         else:
-            # Başarı mesajı
             if bonus_type == "freespin":
-                msg = "✅ **500 FreeSpin** hesabınıza başarıyla yüklendi!"
+                await query.edit_message_text("✅ 500 FreeSpin hesabınıza başarıyla yüklendi!")
             elif bonus_type == "freebet":
-                msg = "✅ **50 FreeBet** hesabınıza başarıyla yüklendi!"
+                await query.edit_message_text("✅ 50 FreeBet hesabınıza başarıyla yüklendi!")
             else:
-                msg = "✅ Bonus hesabınıza başarıyla yüklendi!"
-            
-            await query.edit_message_text(msg)
+                await query.edit_message_text("✅ Bonus hesabınıza başarıyla yüklendi!")
 
             # ✅ Bonus verildi → artık bu Telegram hesabı kilitlendi
             mark_bonus_given(user_id)
@@ -702,7 +703,7 @@ async def broadcast_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Komut bir fotoğraf mesajına cevap olarak kullanılmalı
     if not update.message.reply_to_message or not update.message.reply_to_message.photo:
-        await update.message.reply_text("❌ Kullanım: `/duyuru` komutunu bir fotoğraf mesajına cevap olarak gönderiniz.")
+        await update.message.reply_text("❌ Kullanım: /duyuru komutunu bir fotoğraf mesajına cevap olarak gönderiniz.")
         return
 
     photo = update.message.reply_to_message.photo[-1].file_id  # en yüksek çözünürlüklü fotoğraf
@@ -712,7 +713,7 @@ async def broadcast_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         with open(USERS_FILE, "r", encoding="utf-8") as f:
             users = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+    except FileNotFoundError:
         users = []
 
     if not users:
@@ -721,51 +722,32 @@ async def broadcast_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     sent_count = 0
     failed_count = 0
-    
-    # Kullanıcıları int listesi olarak normalize et
-    target_users = []
-    for uid in users:
-        try:
-            target_users.append(int(uid))
-        except ValueError:
-            continue
-            
-    await update.message.reply_text(f"📢 **{len(target_users)}** kullanıcıya resimli duyuru gönderiliyor...")
 
-    for uid in target_users:
+    for uid in users:
         try:
             await context.bot.send_photo(chat_id=uid, photo=photo, caption=caption)
             sent_count += 1
         except Exception as e:
-            # Hata kodu 403 (Forbidden) genellikle kullanıcının botu engellediği anlamına gelir
-            if "Forbidden: bot was blocked by the user" in str(e):
-                 print(f"❌ {uid} kullanıcısına mesaj gönderilemedi: Kullanıcı botu engelledi.")
-            else:
-                print(f"❌ {uid} kullanıcısına resimli mesaj gönderilemedi: {e}")
+            print(f"❌ {uid} kullanıcısına resimli mesaj gönderilemedi: {e}")
             failed_count += 1
-        # Flood sınırlarını aşmamak için küçük bir bekleme
-        await asyncio.sleep(0.05) 
 
     await update.message.reply_text(
-        f"✅ Resimli duyuru gönderimi tamamlandı.\n"
-        f"📨 Başarılı: **{sent_count}**\n"
-        f"⚠️ Başarısız: **{failed_count}**"
+        f"✅ Resimli duyuru gönderildi.\n"
+        f"📨 Başarılı: {sent_count}\n"
+        f"⚠️ Başarısız: {failed_count}"
     )
-    
 # ================== Runner ==================
-if __init__ == "__main__":
-    app = ApplicationBuilder().token(TOKEN).build()
-    
-    # Arka plan görevini başlat
-    app.job_queue.run_once(
-        lambda ctx: asyncio.create_task(token_reminder_task(app)), 
-        0
-    )
+if __name__ == "__main__":
+    # JobQueue'u aktif etmek için JobQueue() örneği kullanıldı
+    app = ApplicationBuilder().token(TOKEN).job_queue(JobQueue()).build()
+
+    # Token hatırlatıcısını çalıştır
+    app.job_queue.run_once(token_reminder_task, 1, name='token_reminder_start')
 
     app.add_handler(CallbackQueryHandler(bonus_button_handler, pattern="^bonus_"))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("settoken", set_token)) 
+    app.add_handler(CommandHandler("settoken", set_token))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_username))
     app.add_handler(CommandHandler("duyuru", broadcast_photo))
     print("Bot çalışmaya başladı...")
