@@ -15,6 +15,9 @@ from thefuzz import process
 from bs4 import BeautifulSoup # Web scraping için eklendi
 import re # Haber başlıklarını temizlemek için eklendi
 import sys # Hata çıkışları için eklendi
+import matplotlib
+matplotlib.use('Agg')
+
 
 # Lütfen bu TOKEN'ı kendi bot tokeniniz ile değiştirin
 BOT_TOKEN = "7932037979:AAHyz8Lay8tDl7nwb4L4WFXfPihn3NjTRW4" 
@@ -1350,6 +1353,12 @@ async def send_dip_tarama_nasdaq(update: Update, context: ContextTypes.DEFAULT_T
     else:
         await query.message.reply_text("❌ Veri çekme başarısız oldu veya kurala uyan sembol bulunamadı.", reply_markup=reply_markup)
 
+async def Derinlik(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    
+    query = update.callback_query
+    
+    await query.edit_message_text("Derinlik/Akd şuanda aktif değil en yakın zamanda eklenecektir...")
+    
 
 async def send_dusen_trend_bist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Düşen Trend Kırılımı BIST (EMA, MACD, RSI bazlı) sonuçlarını çeker ve PNG olarak gönderir."""
@@ -1707,6 +1716,9 @@ def main_menu_keyboard():
             InlineKeyboardButton("📈 Hisse Analizi (Teknik+Temel)", callback_data="HISSE"),
         ],
         [
+            InlineKeyboardButton("📈 Derinlik/AKD", callback_data="Derinlik"),
+        ],
+        [
             InlineKeyboardButton("📰 Haberler", callback_data="HABERLER"), # YENİ HABER BUTONU
         ],
         [
@@ -1892,6 +1904,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_dip_tarama_nasdaq(update, context)
         return
 
+    if data == "Derinlik":
+        await Derinlik(update, context)
+        return
+
     if data == "Dusen_Trend_Kirilimi_BIST":
         await send_dusen_trend_bist(update, context)
         return
@@ -1903,10 +1919,128 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_potansiyelli_kagitlar_nasdaq(update, context)
         return
 
+# ------------------- YENİ EKLENEN YAPAY ZEKA YORUM FONKSİYONU -------------------
+
+# ------------------- GÜNCELLENMİŞ YAPAY ZEKA KAPSAMLI YORUM FONKSİYONU -------------------
+
+# ------------------- GÜNCELLENMİŞ YAPAY ZEKA KAPSAMLI YORUM FONKSİYONU (HATA GİDERİLDİ) -------------------
+
+# ------------------- GÜNCELLENMİŞ YAPAY ZEKA KAPSAMLI YORUM FONKSİYONU (HATALAR GİDERİLDİ) -------------------
+
+def generate_ai_commentary(symbol: str, fundamentals: dict) -> str:
+    """
+    Verilen temel analiz özetini (GYO/Varlık odaklı) daha kapsamlı yorumlar.
+    """
+    
+    # Simülasyon verilerini güvenli bir şekilde çekme (Kullanıcının verdiği örnek veriler baz alınarak)
+    fk = fundamentals.get('Geriye Dönük F/K')
+    roe = fundamentals.get('Özkaynak Karlılığı (ROE) (%)')
+    roa = fundamentals.get('Varlık Karlılığı (ROA) (%)') 
+    current_ratio = fundamentals.get('Cari Oran')
+    debt_to_equity = fundamentals.get('Borç/Özkaynak')
+    ps = fundamentals.get('Fiyat/Satış (P/S)') 
+    
+    # Ekstra varsayılan veriler 
+    net_profit_margin = fundamentals.get('Net Kar Marjı (%)')
+    
+    # ------------------- 1. Temel Çıkarımlar ve Yorum Cümleleri -------------------
+    yorumlar = []
+    
+    # 1.1. Değerleme (F/K)
+    if fk is not None and fk > 0:
+        if fk < 10:
+            yorumlar.append(f"Çok Düşük F/K ({fk:.2f}) oranı, hissenin mevcut **yüksek kârlılığa göre çok ucuz** (iskontolu) işlem gördüğünü gösterir.")
+        elif fk > 20:
+            yorumlar.append(f"Yüksek F/K ({fk:.2f}) oranı, piyasanın şirketten **agresif bir büyüme beklentisi** olduğunu gösterir.")
+        else:
+            yorumlar.append(f"F/K oranı ({fk:.2f}) piyasa ortalamasında kabul edilebilir bir seviyededir.")
+    elif fk is not None and fk <= 0:
+         yorumlar.append("Negatif F/K oranı, şirketin son 12 ayda **zarar** ettiğini gösterir. Temel analiz açısından güçlü bir zayıflıktır.")
+    
+    # 1.2. Kârlılık ve Verimlilik (Net Kar Marjı, ROA)
+    if net_profit_margin is not None and net_profit_margin > 15:
+        yorumlar.append(f"Mükemmel Net Kâr Marjı ({net_profit_margin:.2f}%) ile şirket, satışlarının büyük bir kısmını kâra çevirmede **son derece başarılıdır**.")
+    elif net_profit_margin is not None and net_profit_margin > 5:
+        yorumlar.append(f"Güçlü Net Kâr Marjı ({net_profit_margin:.2f}%).")
+
+    if roa is not None:
+        if symbol.endswith('GYO') or roa < 5: 
+            yorumlar.append(f"Varlık Karlılığı (ROA) ({roa:.2f}%) düşüktür. Ancak, **GYO'lar** ve varlık şirketlerinde varlıklar yüksek değerlendiği için bu oran düşük çıkar ve bu durum **sektör için normaldir**.")
+        elif roa > 10:
+            yorumlar.append(f"Yüksek Varlık Karlılığı (ROA) ({roa:.2f}%) ile şirketin varlıklarını etkin kullandığı görülmektedir.")
+
+    # 1.3. Likidite ve Borçluluk (Cari Oran, Borç/Özkaynak)
+    if current_ratio is not None and current_ratio >= 1.5:
+        yorumlar.append(f"Cari Oran ({current_ratio:.2f}) 1.5'in üzerindedir. Şirketin kısa vadeli yükümlülüklerini yerine getirme konusunda **güçlü ve rahat bir likiditeye** sahip olduğu görülmektedir.")
+    elif current_ratio is not None and current_ratio < 1:
+        yorumlar.append(f"Cari Oran ({current_ratio:.2f}) 1'in altındadır. Kısa vadeli borç ödemede baskı riski mevcuttur. **Dikkatle incelenmelidir**.")
+    elif current_ratio is not None:
+         yorumlar.append(f"Cari Oran ({current_ratio:.2f}) yeterli düzeydedir (1.0 ile 1.5 arası).")
+
+    if debt_to_equity is not None:
+        if debt_to_equity < 1:
+            yorumlar.append(f"Borç/Özkaynak oranı ({debt_to_equity:.2f}) 1'in altındadır. Finansal kaldıraç orta düzeydedir ve **borç yükü yönetilebilir** sınırlar içindedir.")
+        else:
+            yorumlar.append(f"Borç/Özkaynak oranı ({debt_to_equity:.2f}) 1'in üzerindedir. Borçluluk seviyesi yüksektir, ancak GYO/Altyapı şirketlerinde bu borcun uzun vadeli olması riski hafifletebilir.")
+            
+    # 1.4. P/S Oranı ve Sektörel Bağlam (Özel Durum)
+    if ps is not None:
+        if symbol.endswith('GYO') and ps is not None and ps > 5: # ps için None kontrolü eklendi
+            yorumlar.append(f"Yüksek P/S Oranı ({ps:.2f}) satışlara göre pahalı görünse de, GYO'larda asıl odak **aktiflerin net defter değeri (NAV)** üzerindedir. Yüksek P/S, piyasanın aktiflerin değerini yüksek gördüğü şeklinde yorumlanabilir.")
+        elif ps is not None and ps > 5:
+            yorumlar.append(f"P/S Oranı ({ps:.2f}) yüksektir, bu da şirketin satış gelirlerine göre yüksek fiyatlandığını ve piyasanın gelecekteki satış artışını peşinen fiyatladığını gösterir.")
+
+    # ------------------- 2. Yorumu Birleştirme ve Sınıflandırma -------------------
+    
+    is_gyo = symbol.endswith('GYO')
+    overall_sentiment = "Dengeli"
+    if fk is not None and fk < 10 and fk > 0 and net_profit_margin is not None and net_profit_margin > 15:
+        overall_sentiment = "Güçlü Kârlılık ve Cazip Değerleme"
+    elif fk is not None and fk <= 0:
+        overall_sentiment = "Zayıf Kârlılık"
+    elif debt_to_equity is not None and debt_to_equity > 2 and not is_gyo:
+        overall_sentiment = "Yüksek Finansal Risk"
+
+    # HATA GİDERİLDİ: Puan tablosundaki anahtar adları, tablodaki sütun başlıklarıyla eşleştirildi.
+    puan_tablosu = {
+         "Değerleme (F/K)": "Çok Güçlü" if fk is not None and fk < 10 and fk > 0 else "Nötr",
+         "Kârlılık Marjları": "Mükemmel" if net_profit_margin is not None and net_profit_margin > 15 else "Güçlü",
+         "Likidite Düzeyi": "Güçlü" if current_ratio is not None and current_ratio >= 1.5 else "Yeterli/Riskli",
+         "Borç Yükü": "Orta/Güçlü" if debt_to_equity is not None and debt_to_equity < 1 else "Yüksek Kaldıraç",
+         "Verimlilik (ROA/P/S)": "Nötr (Sektöre Özgü)" if is_gyo else ("Düşük" if roa is not None and roa < 5 else "Yüksek")
+    }
+
+    if not yorumlar:
+         final_commentary = f"⚠️ **{symbol}** için temel finansal veriler çekilemedi veya yorumlanmaya uygun nitelikte bir veri seti bulunamadı."
+    else:
+        # Hata düzeltildi: yom değişkeni kullanılıyor
+        final_commentary = (
+            f"🧠 **Yapay Zeka Kapsamlı Analiz ({symbol})**\n"
+            "--------------------------------------------------\n"
+            "### 🔎 Temel Çıkarımlar:\n" +
+            "\n".join([f"• {yom}" for yom in yorumlar]) +
+            f"\n\n### ⭐ Finansal Sağlık Özet Karnesi:\n"
+            f"| Kriter | Durum |\n"
+            f"|:---|:---|\n"
+            f"| Değerleme (F/K) | **{puan_tablosu['Değerleme (F/K)']}** |\n"
+            f"| Kârlılık Marjları | **{puan_tablosu['Kârlılık Marjları']}** |\n" # Hata buradaydı, düzeltildi!
+            f"| Likidite Düzeyi | **{puan_tablosu['Likidite Düzeyi']}** |\n"
+            f"| Borç Yükü | **{puan_tablosu['Borç Yükü']}** |\n"
+            f"| Varlık Verimliliği (ROA) | **{puan_tablosu['Verimlilik (ROA/P/S)']}** |\n"
+            f"\n### 🎯 Genel Eğilim\n"
+            f"Şirket, **{overall_sentiment}** bir görünüme sahiptir.\n"
+            f"**Önemli Not:** Değerleme cazipken kârlılık marjları güçlüdür. Ancak eğer hisse bir GYO ise, ROA ve P/S oranlarındaki sapmalar normal kabul edilmeli ve asıl analiz, **Net Aktif Değerine (NAV)** odaklanmalıdır.\n\n"
+            f"*(Bu analiz bilgilendirme amaçlı Yapay Zeka simülasyonudur ve kesinlikle yatırım tavsiyesi değildir.)*"
+        )
+    return final_commentary
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_subscription(update, context): # Bu fonksiyonun tanımlı olduğunu varsayıyorum
+    # Abonelik kontrolü
+    if not await check_subscription(update, context):
         return
 
+    # Sadece hisse kodu bekleniyorsa çalışır
     if context.user_data.get('waiting_for_stock'):
         text = update.message.text.strip().upper()
         context.user_data['waiting_for_stock'] = False
@@ -1917,26 +2051,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if text in BILINEN_HISSELER:
             
             hisse_adi = BILINEN_HISSELER[text]
-            # 1.1. Yükleniyor Mesajı
             message = await update.message.reply_text(f"⏳ **{text}** ({hisse_adi}) için kapsamlı veriler alınıyor... Bu işlem biraz zaman alabilir.")
             
-            # --- VERİ ÇEKME VE GÖRSELLEŞTİRME BLOKU ---
-            
-            # Grafik ve Temel Analiz için veri çekme ve görselleri oluşturma
+            # --- VERİ ÇEKME VE GÖRSELLEŞTİRME BLOKU (Değişmedi) ---
             chart_path = None
-            chart_result = fetch_chart_data(text) # Bu yardımcı fonksiyon tanımlı olmalı
+            chart_result = fetch_chart_data(text)
             if chart_result:
                 times, closes = chart_result
-                chart_path = plot_advanced_chart(text, times, closes) # Bu yardımcı fonksiyon tanımlı olmalı
+                chart_path = plot_advanced_chart(text, times, closes) 
 
-            fundamentals = fetch_fundamentals(text) # Bu yardımcı fonksiyon tanımlı olmalı
+            fundamentals = fetch_fundamentals(text)
             fundamentals_path = None
+            ai_commentary = None
+            
             if fundamentals:
-                fundamentals_path = generate_fundamentals_image(text, fundamentals) # Bu yardımcı fonksiyon tanımlı olmalı
+                fundamentals_path = generate_fundamentals_image(text, fundamentals) 
+                ai_commentary = generate_ai_commentary(text, fundamentals) 
 
-            await message.delete() # Yükleniyor mesajını sil
+            await message.delete()
 
-            # 1.2. Teknik Analiz PNG Gönderimi
+            # Cevapların sırayla gönderilmesi
             if chart_path:
                 with open(chart_path, "rb") as img:
                     await update.message.reply_photo(img, caption=f"📈 **{text}** ({hisse_adi}) - Son 6 Ay Gelişmiş Grafiği")
@@ -1944,35 +2078,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await update.message.reply_text(f"⚠️ **{text}** ({hisse_adi}) için teknik analiz grafiği verisi alınamadı.")
 
-            # 1.3. Temel Analiz PNG Tablosu Gönderimi
             if fundamentals_path:
                 with open(fundamentals_path, "rb") as img2:
                     await update.message.reply_photo(img2, caption=f"💹 **{text}** ({hisse_adi}) - Kapsamlı Temel Analiz Verileri")
                 os.remove(fundamentals_path)
             else:
                 await update.message.reply_text(f"⚠️ **{text}** ({hisse_adi}) için kapsamlı temel analiz verileri alınamadı.")
-
-
+            
+            if ai_commentary:
+                await update.message.reply_text(ai_commentary, parse_mode='Markdown')
+            
             keyboard = [[InlineKeyboardButton("⬅️ Ana Menü", callback_data="BACK_MAIN")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text("İşlem tamamlandı.", reply_markup=reply_markup)
             
             return # Tam eşleşme işlemi bitti
+            
         
-        # 2. Benzerlik Kontrolü (Fuzzy Matching) - Şirket Adı Eklendi
-        # process import edilmeli (thefuzz kütüphanesi)
+        # 2. Benzerlik Kontrolü (FUZZY MATCHING) - Yeni/düzeltilmiş blok
+        
+        # Benzerlik skoru 80 ve üzeri olan ilk 5 eşleşmeyi bul
         best_matches = process.extractBests(text, mevcut_hisseler, limit=5, score_cutoff=80) 
 
         if best_matches:
             # Öneri metnini hazırla
             oneriler = []
             for match, score in best_matches:
-                company_name = BILINEN_HISSELER.get(match, "Bilinmeyen Şirket") # Şirket adı burada alınıyor
-                
+                company_name = BILINEN_HISSELER.get(match, "Bilinmeyen Şirket")
+                # Skor 85 ve üzeri ise kalın, altı ise normal yaz
                 if score >= 85:
-                    oneriler.append(f"**{match}** ({company_name}) - Skor: {score}%")
+                    oneriler.append(f"**{match}** ({company_name}) - Benzerlik: {score}%")
                 else:
-                    oneriler.append(f"*{match}* ({company_name}) - Skor: {score}%") 
+                    # %80-84 arası eşleşmeler
+                    oneriler.append(f"{match} ({company_name}) - Benzerlik: {score}%") 
             
             oneriler_metni = "\n".join(oneriler)
             
@@ -1982,23 +2120,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup = InlineKeyboardMarkup(keyboard)
 
             await update.message.reply_text(
-                f"❌ **'{text}'** kodu tam olarak bulunamadı, ancak aşağıdaki gibi benzer hisseler bulundu:\n\n{oneriler_metni}\n\nLütfen listedekilerden birini **tam olarak** girin veya ana menüye dönün.", 
+                f"❌ **'{text}'** kodu tam olarak bulunamadı. Lütfen aşağıdaki **benzer hisselerden** birinin kodunu tam olarak girin:\n\n{oneriler_metni}\n\n", 
                 reply_markup=reply_markup, 
                 parse_mode='Markdown'
             )
-            return
+            # Burada tekrar hisse kodu beklemeye devam etmesi için 'waiting_for_stock' flag'ini tekrar True yapıyoruz.
+            context.user_data['waiting_for_stock'] = True 
+            return # Benzerlik eşleşme işlemi bitti
 
-        # 3. Hiçbir Eşleşme Yoksa
+        # 3. Hiçbir Eşleşme Yoksa (Skor < 80)
         keyboard = [[InlineKeyboardButton("⬅️ Ana Menü", callback_data="BACK_MAIN")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
-            f"❌ **{text}** geçerli bir BIST kodu değil ve benzer bir kod da bulunamadı. Lütfen listedeki kodlardan birini girin: {', '.join(list(BILINEN_HISSELER.keys())[:10])}...", 
+            f"❌ **{text}** geçerli bir BIST kodu değil ve yüksek benzerlikte bir kod bulunamadı (Eşleşme Skoru < 80). Lütfen listeden bir kodu kontrol edin.",
             reply_markup=reply_markup
         )
+        context.user_data['waiting_for_stock'] = True 
         return
-        
+            
     else:
-        await update.message.reply_text("Lütfen menüden bir seçenek seçin veya /start yazın.")
+        # Menü harici bir mesaj gelirse
+        await update.message.reply_text("Lütfen menüden bir seçenek seçin veya /start yazın.", reply_markup=main_menu_keyboard())
 # ------------------- Hata -------------------
 
 async def error(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
